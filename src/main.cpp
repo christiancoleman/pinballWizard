@@ -1,4 +1,4 @@
-#include <Adafruit_NeoPixel.h>
+#include <NeoPixelBus.h>
 #include <BleKeyboard.h>
 #include <BleGamepad.h>
 #include <NimBLEDevice.h>
@@ -39,8 +39,8 @@ SemaphoreHandle_t layoutMutex;
 SemaphoreHandle_t connectionMutex;
 SemaphoreHandle_t ledModeMutex;
 
-Adafruit_NeoPixel pixels(NUMPIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel strip(NUM_STRIP_LEDS, PIN_LED_STRIP, NEO_GRB + NEO_KHZ800);
+NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0Ws2812xMethod> pixels(NUMPIXELS, PIN_NEOPIXEL);
+NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt1Ws2812xMethod> strip(NUM_STRIP_LEDS, PIN_LED_STRIP);
 
 // Layout definitions
 enum Layout {
@@ -56,10 +56,10 @@ enum LEDMode {
 	LED_MODE_RAINBOW = 2       // Color changing
 };
 
-const uint32_t layoutColors[] = {
-	0x00FF00,  // Green
-	0x0000FF,  // Blue
-	0xFF00FF   // Purple/Magenta
+const RgbColor layoutColors[] = {
+	RgbColor(0, 255, 0),    // Green
+	RgbColor(0, 0, 255),    // Blue
+	RgbColor(255, 0, 255)   // Purple/Magenta
 };
 
 // Variables for the chase pattern
@@ -245,11 +245,11 @@ void switchLayout(Layout newLayout) {
 		
 		// Flash LED to indicate restart
 		for(int i = 0; i < 6; i++) {
-			pixels.fill(layoutColors[newLayout]);
-			pixels.show();
+			pixels.ClearTo(layoutColors[newLayout]);
+			pixels.Show();
 			delay(150);
-			pixels.fill(0x000000);
-			pixels.show();
+			pixels.ClearTo(RgbColor(0));
+			pixels.Show();
 			delay(150);
 		}
 		
@@ -340,8 +340,10 @@ void updateLED() {
 	
 	if(connected) {
 		// Solid color when connected
-		pixels.fill(layoutColors[layout]);
-		pixels.show();
+		RgbColor color = layoutColors[layout];
+		color = RgbColor::LinearBlend(color, RgbColor(0), 0.8f); // Dim to 20% brightness
+		pixels.ClearTo(color);
+		pixels.Show();
 	} else {
 		// Blink when disconnected
 		if(millis() - lastBlinkTime >= 500) {
@@ -349,11 +351,13 @@ void updateLED() {
 			ledState = !ledState;
 			
 			if(ledState) {
-				pixels.fill(layoutColors[layout]);
+				RgbColor color = layoutColors[layout];
+				color = RgbColor::LinearBlend(color, RgbColor(0), 0.8f); // Dim to 20% brightness
+				pixels.ClearTo(color);
 			} else {
-				pixels.fill(0x000000);
+				pixels.ClearTo(RgbColor(0));
 			}
-			pixels.show();
+			pixels.Show();
 		}
 	}
 }
@@ -365,7 +369,7 @@ void updateChasePattern() {
 		lastChaseUpdate = currentTime;
 		
 		// Clear all LEDs
-		strip.clear();
+		strip.ClearTo(RgbColor(0));
 		
 		// Get current layout for color
 		Layout layout;
@@ -376,23 +380,15 @@ void updateChasePattern() {
 		// Set the current position and trailing LEDs with fading effect
 		for (int i = 0; i < 3; i++) {  // 3 LED "tail"
 			int pos = (chasePosition - i + NUM_STRIP_LEDS) % NUM_STRIP_LEDS;
-			int brightness = 255 - (i * 85);  // Fade the tail
+			float brightness = 1.0f - (i * 0.333f);  // Fade the tail
 			
-			// Use the current layout color
-			uint32_t color = layoutColors[layout];
-			uint8_t r = (color >> 16) & 0xFF;
-			uint8_t g = (color >> 8) & 0xFF;
-			uint8_t b = color & 0xFF;
+			RgbColor color = layoutColors[layout];
+			color = RgbColor::LinearBlend(RgbColor(0), color, brightness);
 			
-			// Apply brightness
-			r = (r * brightness) / 255;
-			g = (g * brightness) / 255;
-			b = (b * brightness) / 255;
-			
-			strip.setPixelColor(pos, strip.Color(r, g, b));
+			strip.SetPixelColor(pos, color);
 		}
 		
-		strip.show();
+		strip.Show();
 		
 		// Move to next position
 		chasePosition = (chasePosition + 1) % NUM_STRIP_LEDS;
@@ -407,8 +403,8 @@ void updateSolidPattern() {
 	xSemaphoreGive(layoutMutex);
 	
 	// Fill all LEDs with the current layout color
-	strip.fill(layoutColors[layout]);
-	strip.show();
+	strip.ClearTo(layoutColors[layout]);
+	strip.Show();
 }
 
 void updateRainbowPattern() {
@@ -417,12 +413,13 @@ void updateRainbowPattern() {
 	if (currentTime - lastRainbowUpdate >= RAINBOW_SPEED) {
 		lastRainbowUpdate = currentTime;
 		
-		// Pre-calculate color once
-		uint32_t color = strip.gamma32(strip.ColorHSV(rainbowHue));
+		// Convert hue to color
+		HslColor hslColor(rainbowHue / 65535.0f, 1.0f, 0.5f);
+		RgbColor rgbColor(hslColor);
 		
 		// Use fill instead of individual pixel sets
-		strip.fill(color);
-		strip.show();
+		strip.ClearTo(rgbColor);
+		strip.Show();
 		
 		rainbowHue += 256;
 		if(rainbowHue > 65535) {
@@ -467,18 +464,16 @@ void setup() {
 	pinMode(NEOPIXEL_POWER, OUTPUT);
 	digitalWrite(NEOPIXEL_POWER, HIGH);
 	
-	// shine onboard light
-	pixels.begin();
-	pixels.setBrightness(20);
-
+	// Initialize NeoPixelBus
+	pixels.Begin();
+	strip.Begin();
+	
 	// Start accelerometer pins and init (chip is MPU6050)
 	Wire.begin(ACCELEROMETER_SDA, ACCELEROMETER_SCL);
 	mpu.initialize();
 
 	// Initialize LED strip
-	strip.begin();
-	strip.setBrightness(50);  // Adjust brightness as needed
-	strip.show();  // Initialize all pixels to 'off'
+	strip.Show();  // Initialize all pixels to 'off'
 
 	// Set pin modes for all buttons
 	pinMode(BTN_RIGHT_FLIPPER, INPUT_PULLUP);
