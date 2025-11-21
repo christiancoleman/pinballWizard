@@ -418,14 +418,14 @@ void updateRainbowPattern() {
 	if (currentTime - lastRainbowUpdate >= RAINBOW_SPEED) {
 		lastRainbowUpdate = currentTime;
 		
-		// Fill all LEDs with the same color that changes over time
-		for(int i = 0; i < NUM_STRIP_LEDS; i++) {
-			strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(rainbowHue)));
-		}
+		// Pre-calculate color once
+		uint32_t color = strip.gamma32(strip.ColorHSV(rainbowHue));
+		
+		// Use fill instead of individual pixel sets
+		strip.fill(color);
 		strip.show();
 		
-		// Increment the hue for next update
-		rainbowHue += 256;  // Adjust speed of color change
+		rainbowHue += 256;
 		if(rainbowHue > 65535) {
 			rainbowHue = 0;
 		}
@@ -567,7 +567,13 @@ void LEDTask(void *pvParameters) {
 }
 
 void startHaptic(int motorPin, unsigned long &startTime, bool &isActive) {
-	// Non-blocking version - just start the motor
+	// Always turn off first to prevent stuck-on state
+	digitalWrite(motorPin, LOW);
+	
+	// Small delay to ensure motor is off
+	delayMicroseconds(100);
+	
+	// Now start fresh
 	digitalWrite(motorPin, HIGH);
 	startTime = millis();
 	isActive = true;
@@ -578,6 +584,13 @@ void updateHaptics() {
 	
 	if (areMotorsActive) {
 		unsigned long elapsed = currentTime - motorsStartTime;
+		
+		// Add safety timeout - never run more than 100ms total
+		if (elapsed > 100) {
+			digitalWrite(FLIPPER_MOTORS, LOW);
+			areMotorsActive = false;
+			return;
+		}
 		
 		if (elapsed < 25) {
 			// First pulse - keep motor on
