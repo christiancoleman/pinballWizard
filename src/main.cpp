@@ -38,7 +38,6 @@ TaskHandle_t MainTaskHandle = NULL;
 SemaphoreHandle_t layoutMutex;
 SemaphoreHandle_t connectionMutex;
 SemaphoreHandle_t ledModeMutex;
-SemaphoreHandle_t stripMutex;
 
 Adafruit_NeoPixel pixels(NUMPIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel strip(NUM_STRIP_LEDS, PIN_LED_STRIP, NEO_GRB + NEO_KHZ800);
@@ -450,7 +449,6 @@ void updateStripLEDs() {
 			updateRainbowPattern();
 			break;
 	}
-  xSemaphoreGive(stripMutex);  // ADD THIS
 }
 
 void setup() {
@@ -465,7 +463,6 @@ void setup() {
 	layoutMutex = xSemaphoreCreateMutex();
 	connectionMutex = xSemaphoreCreateMutex();
 	ledModeMutex = xSemaphoreCreateMutex();
-  stripMutex = xSemaphoreCreateMutex();
 	
 	pinMode(NEOPIXEL_POWER, OUTPUT);
 	digitalWrite(NEOPIXEL_POWER, HIGH);
