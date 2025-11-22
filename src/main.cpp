@@ -75,10 +75,11 @@ volatile bool deviceConnected = false;
 
 Preferences preferences;
 
-// Only create the appropriate object based on layout
+// Only create the appropriate object based on game mode
 BleKeyboard* keyboard = nullptr;
 BleGamepad* gamepad = nullptr;
 
+// sets to quest upon boot, but setup will get the correct one
 GameMode currentGameMode = GAMEMODE_QUEST_PINBALL;
 bool isGamepadMode = false;
 
@@ -96,9 +97,9 @@ unsigned long motorsStartTime = 0;
 bool areMotorsActive = false;
 const unsigned long HAPTIC_DURATION = 30; // 30ms pulse duration
 
-// Layout switching
+// Game mode switching
 unsigned long startPressTime = 0;
-bool layoutSwitchHandled = false;
+bool gameModeSwitchHandled = false;
 
 // LED blinking for disconnected state
 unsigned long lastBlinkTime = 0;
@@ -149,6 +150,7 @@ GameMode loadGameMode() {
 	preferences.begin(TOPLEVELNAME, true);
 	uint8_t saved = preferences.getUChar(GAMEMODE, 0);
 	preferences.end();
+	Serial.print("Game mode is: " + saved);
 	if(saved > 2) saved = 0;  // Safety check
 	Serial.print("Loaded gameMode: ");
 	Serial.println(saved);
@@ -167,18 +169,18 @@ LEDMode loadLEDMode() {
 
 void setBLEAddress(uint8_t offset) {
 	uint8_t newMAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0x00};
-	newMAC[5] = 0x10 + offset;  // Different last byte for each layout
+	newMAC[5] = 0x10 + offset;  // Different last byte for each game mode
 	esp_base_mac_addr_set(newMAC);
 }
 
 void initGameMode(GameMode gameMode) {
-	// Set unique MAC address for each layout
+	// Set unique MAC address for each game mode
 	setBLEAddress(gameMode);  // 0x10 for Quest, 0x11 for PC, 0x12 for Gamepad
 
 	currentGameMode = gameMode;
 	isGamepadMode = (gameMode == GAMEMODE_GAMEPAD);
 	
-	// Reset all button states when switching layouts
+	// Reset all button states when switching game mode
 	lastRightState = HIGH;
 	lastLeftState = HIGH;
 	lastPlungerState = HIGH;
@@ -232,7 +234,6 @@ void switchGameMode(GameMode gameMode) {
 	bool needsRestart = (isGamepadMode != (gameMode == GAMEMODE_GAMEPAD));
 	
 	if(needsRestart) {
-		// Save new layout and restart
 		Serial.println("Mode change requires restart...");
 		saveGameMode(gameMode);
 		
@@ -272,9 +273,9 @@ void switchGameMode(GameMode gameMode) {
 	}
 }
 
-void cycleLayout() {
-	GameMode nextLayout = (GameMode)((currentGameMode + 1) % 3);
-	switchGameMode(nextLayout);
+void cycleGameMode() {
+	GameMode nextGameMode = (GameMode)((currentGameMode + 1) % 3);
+	switchGameMode(nextGameMode);
 }
 
 void cycleLEDMode() {
@@ -341,7 +342,7 @@ void updateChasePattern() {
 		// Clear all LEDs
 		strip.ClearTo(RgbColor(0));
 		
-		// Get current layout for color
+		// Get current game mode for unique color
 		GameMode gameMode = currentGameMode;
 		// Set the current position and trailing LEDs with fading effect
 		for (int i = 0; i < 3; i++) {  // 3 LED "tail"
@@ -362,7 +363,6 @@ void updateChasePattern() {
 }
 
 void updateSolidPattern() {
-	// Fill all LEDs with the current layout color
 	strip.ClearTo(ledLayoutColors[currentGameMode]);
 	strip.Show();
 }
@@ -436,7 +436,7 @@ void setup() {
 
 	Serial.println("=== Pinball Controller Starting ===");
 	
-	// Load and start with last used layout
+	// Load and start with last used game mode
 	GameMode savedGameMode = loadGameMode();
 	initGameMode(savedGameMode);
 	
@@ -529,7 +529,7 @@ void updateHaptics() {
 	}
 }
 
-void handleQuestPinballLayout(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed, 
+void handleQuestPinballMode(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed, 
 													bool rMagnaSavePressed, bool lMagnaSavePressed) {
 	if(keyboard == nullptr) {
 		return;
@@ -593,7 +593,7 @@ void handleQuestPinballLayout(bool rightPressed, bool leftPressed, bool plungerP
 	lastLeftMagnaSave = lMagnaSavePressed ? LOW : HIGH;
 }
 
-void handlePCPinballLayout(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed, 
+void handlePCPinballMode(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed, 
 													bool startPressed, bool rMagnaSavePressed, bool lMagnaSavePressed) {
 	if(keyboard == nullptr) return;
 	
@@ -662,7 +662,7 @@ void handlePCPinballLayout(bool rightPressed, bool leftPressed, bool plungerPres
 	lastLeftMagnaSave = lMagnaSavePressed ? LOW : HIGH;
 }
 
-void handleGamepadLayout(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed,
+void handleGamepadMode(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed,
 												bool startPressed, bool rMagnaSavePressed, bool lMagnaSavePressed) {
 	if(gamepad == nullptr) return;
 
@@ -856,21 +856,21 @@ void loop() {
 	bool rMagnaSavePressed = (digitalRead(BTN_RMAGNASAVE) == LOW);
 	bool lMagnaSavePressed = (digitalRead(BTN_LMAGNASAVE) == LOW);
 	
-	// Handle layout switching (works in all modes, connected or not)
+	// Handle game mode switching (works in all modes, connected or not)
 	if(startPressed && lastStartState == HIGH) {
 		startPressTime = millis();
-		layoutSwitchHandled = false;
+		gameModeSwitchHandled = false;
 	}
 	
-	if(startPressed && !layoutSwitchHandled) {
+	if(startPressed && !gameModeSwitchHandled) {
 		if(millis() - startPressTime >= 3000) {
-			cycleLayout();
-			layoutSwitchHandled = true;
+			cycleGameMode();
+			gameModeSwitchHandled = true;
 		}
 	}
 	
 	if(!startPressed) {
-		layoutSwitchHandled = false;
+		gameModeSwitchHandled = false;
 	}
 	
 	// Check for LED mode switching combo
@@ -890,20 +890,20 @@ void loop() {
 	
 	// Only process button inputs if connected AND not in LED mode switching combo
 	if(deviceConnected && !ledModeCombo) {
-		// Route to appropriate layout handler
+		// Route to appropriate game mode handler
 		switch(currentGameMode) {
 			case GAMEMODE_QUEST_PINBALL:
-				handleQuestPinballLayout(rightPressed, leftPressed, plungerPressed, specialPressed,
+				handleQuestPinballMode(rightPressed, leftPressed, plungerPressed, specialPressed,
 														rMagnaSavePressed, lMagnaSavePressed);
 				break;
 				
 			case GAMEMODE_PC_PINBALL:
-				handlePCPinballLayout(rightPressed, leftPressed, plungerPressed, specialPressed,
+				handlePCPinballMode(rightPressed, leftPressed, plungerPressed, specialPressed,
 													startPressed, rMagnaSavePressed, lMagnaSavePressed);
 				break;
 				
 			case GAMEMODE_GAMEPAD:
-				handleGamepadLayout(rightPressed, leftPressed, plungerPressed, specialPressed,
+				handleGamepadMode(rightPressed, leftPressed, plungerPressed, specialPressed,
 														startPressed, rMagnaSavePressed, lMagnaSavePressed);
 				break;
 		}
