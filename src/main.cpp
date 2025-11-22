@@ -932,7 +932,7 @@ void MainTask(void *pvParameters) {
 		
 		// Always check nudge if accelerometer is enabled
 		if (accelerometerEnabled) {
-			checkNudge();
+			//checkNudge();
 		}
 		
 		// Read all button states
@@ -977,7 +977,7 @@ void MainTask(void *pvParameters) {
 		}
 		
 		// Only process button inputs if connected AND not in LED mode switching combo
-		if(deviceConnected && !ledModeCombo) {
+		if(!ledModeCombo) {
 			// Route to appropriate layout handler
 			switch(currentLayout) {
 				case LAYOUT_QUEST_PINBALL:
