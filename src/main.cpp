@@ -154,6 +154,12 @@ LEDMode loadLEDMode() {
 	return (LEDMode)saved;
 }
 
+void setBLEAddress(uint8_t offset) {
+	uint8_t newMAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0x00};
+	newMAC[5] = 0x10 + offset;  // Different last byte for each layout
+	esp_base_mac_addr_set(newMAC);
+}
+
 void initLayout(Layout layout) {
 	// Set unique MAC address for each layout
 	setBLEAddress(layout);  // 0x10 for Quest, 0x11 for PC, 0x12 for Gamepad
@@ -380,12 +386,6 @@ void updateStripLEDs() {
 			updateRainbowPattern();
 			break;
 	}
-}
-
-void setBLEAddress(uint8_t offset) {
-	uint8_t newMAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0x00};
-	newMAC[5] = 0x10 + offset;  // Different last byte for each layout
-	esp_base_mac_addr_set(newMAC);
 }
 
 void setup() {
