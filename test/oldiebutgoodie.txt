@@ -1,4 +1,4 @@
-#include <NeoPixelBus.h>
+#include <Adafruit_NeoPixel.h>
 #include <BleKeyboard.h>
 #include <BleGamepad.h>
 #include <NimBLEDevice.h>
@@ -30,17 +30,14 @@
 #define ACCELEROMETER_SDA  4     // SDA
 #define ACCELEROMETER_SCL 33     // SCL
 
-// Task handles
-TaskHandle_t LEDTaskHandle = NULL;
+Adafruit_NeoPixel pixels(NUMPIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel strip(NUM_STRIP_LEDS, PIN_LED_STRIP, NEO_GRB + NEO_KHZ800);
 
-NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0Ws2812xMethod> pixels(NUMPIXELS, PIN_NEOPIXEL);
-NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt1Ws2812xMethod> strip(NUM_STRIP_LEDS, PIN_LED_STRIP);
-
-// Game mode definitions
-enum GameMode {
-	GAMEMODE_QUEST_PINBALL = 0,  // Green - Quest 3 Pinball FX VR
-	GAMEMODE_PC_PINBALL = 1,     // Blue - PC Visual Pinball
-	GAMEMODE_GAMEPAD = 2         // Purple - XInput gamepad
+// Layout definitions
+enum Layout {
+	LAYOUT_QUEST_PINBALL = 0,  // Green - Quest 3 Pinball FX VR (4 buttons)
+	LAYOUT_PC_PINBALL = 1,     // Blue - PC full pinball (all buttons)
+	LAYOUT_GAMEPAD = 2         // Purple - XInput gamepad
 };
 
 // LED Mode definitions
@@ -50,10 +47,10 @@ enum LEDMode {
 	LED_MODE_RAINBOW = 2       // Color changing
 };
 
-const RgbColor ledLayoutColors[] = {
-	RgbColor(0, 255, 0),    // Green
-	RgbColor(0, 0, 255),    // Blue
-	RgbColor(255, 0, 255)   // Purple/Magenta
+const uint32_t layoutColors[] = {
+	0x00FF00,  // Green
+	0x0000FF,  // Blue
+	0xFF00FF   // Purple/Magenta
 };
 
 // Variables for the chase pattern
@@ -70,16 +67,13 @@ uint16_t rainbowHue = 0;  // 0-65535 for full color wheel
 LEDMode currentLEDMode = LED_MODE_CHASE;
 bool ledModeSwitchHandled = false;
 
-// Connection state (shared between tasks)
-volatile bool deviceConnected = false;
-
 Preferences preferences;
 
 // Only create the appropriate object based on layout
 BleKeyboard* keyboard = nullptr;
 BleGamepad* gamepad = nullptr;
 
-GameMode currentGameMode = GAMEMODE_QUEST_PINBALL;
+Layout currentLayout = LAYOUT_QUEST_PINBALL;
 bool isGamepadMode = false;
 
 // Track button states
@@ -117,50 +111,45 @@ unsigned long nudgeStartTime = 0;
 char activeNudgeKey = 0;
 bool accelerometerEnabled = false;  // Track if accelerometer is available
 
+// Add mutex-like flag for button processing
+bool processingButtons = false;
+
 // Bluetooth specific arrays
-const char* gameModeNames[] = {"Quest-PinballFXVR", "PC-VisualPinball", "Gamepad-4-Pinball"};
-const char* mfgNames[] = {"QPBFXVR", "PCPBVP", "GP4PB"};
+const char* layoutNames[] = {"Quest-PinballFXVR", "PC-VisualPinball", "Gamepad-4-Pinball"};
+const char* mfgNames[] = {"QPBFXVR", "PCPBVP", "GPAD4PB"};
 
-// uchar names for saving settings
-#define TOPLEVELNAME "pinball"
-#define LEDMODE "ledmode"
-#define GAMEMODE "gamemode"
-
-// Forward declarations for task functions
-void LEDTask(void *pvParameters);
-
-void saveGameMode(GameMode gameMode) {
-	preferences.begin(TOPLEVELNAME, false);
-	preferences.putUChar(GAMEMODE, (uint8_t)gameMode);
+void saveLayout(Layout layout) {
+	preferences.begin("pinball", false);
+	preferences.putUChar("layout", (uint8_t)layout);
 	preferences.end();
-	Serial.print("Saved gameMode: ");
-	Serial.println(gameMode);
+	Serial.print("Saved layout: ");
+	Serial.println(layout);
 }
 
-void saveLEDMode(LEDMode ledMode) {
-	preferences.begin(TOPLEVELNAME, false);
-	preferences.putUChar(LEDMODE, (uint8_t)ledMode);
+void saveLEDMode(LEDMode mode) {
+	preferences.begin("pinball", false);
+	preferences.putUChar("ledmode", (uint8_t)mode);
 	preferences.end();
-	Serial.print("Saved ledMode: ");
-	Serial.println(ledMode);
+	Serial.print("Saved LED mode: ");
+	Serial.println(mode);
 }
 
-GameMode loadGameMode() {
-	preferences.begin(TOPLEVELNAME, true);
-	uint8_t saved = preferences.getUChar(GAMEMODE, 0);
+Layout loadLayout() {
+	preferences.begin("pinball", true);
+	uint8_t saved = preferences.getUChar("layout", 0);
 	preferences.end();
 	if(saved > 2) saved = 0;  // Safety check
-	Serial.print("Loaded gameMode: ");
+	Serial.print("Loaded layout: ");
 	Serial.println(saved);
-	return (GameMode)saved;
+	return (Layout)saved;
 }
 
 LEDMode loadLEDMode() {
-	preferences.begin(TOPLEVELNAME, true);
-	uint8_t saved = preferences.getUChar(LEDMODE, 0);
+	preferences.begin("pinball", true);
+	uint8_t saved = preferences.getUChar("ledmode", 0);
 	preferences.end();
 	if(saved > 2) saved = 0;  // Safety check
-	Serial.print("Loaded ledMode: ");
+	Serial.print("Loaded LED mode: ");
 	Serial.println(saved);
 	return (LEDMode)saved;
 }
@@ -171,12 +160,12 @@ void setBLEAddress(uint8_t offset) {
 	esp_base_mac_addr_set(newMAC);
 }
 
-void initGameMode(GameMode gameMode) {
+void initLayout(Layout layout) {
 	// Set unique MAC address for each layout
-	setBLEAddress(gameMode);  // 0x10 for Quest, 0x11 for PC, 0x12 for Gamepad
+	setBLEAddress(layout);  // 0x10 for Quest, 0x11 for PC, 0x12 for Gamepad
 
-	currentGameMode = gameMode;
-	isGamepadMode = (gameMode == GAMEMODE_GAMEPAD);
+	currentLayout = layout;
+	isGamepadMode = (layout == LAYOUT_GAMEPAD);
 	
 	// Reset all button states when switching layouts
 	lastRightState = HIGH;
@@ -194,7 +183,7 @@ void initGameMode(GameMode gameMode) {
 	
 	if(isGamepadMode) {
 		Serial.println("Creating gamepad...");
-		gamepad = new BleGamepad(gameModeNames[gameMode], mfgNames[gameMode], 100);
+		gamepad = new BleGamepad(layoutNames[layout], mfgNames[layout], 100);
 		delay(200);
 		Serial.println("Starting gamepad...");
 		gamepad->begin();
@@ -203,21 +192,21 @@ void initGameMode(GameMode gameMode) {
 	} else {
 		// Create keyboard with appropriate name
 		Serial.print("Creating keyboard: ");
-		keyboard = new BleKeyboard(gameModeNames[gameMode], mfgNames[gameMode], 100);
+		keyboard = new BleKeyboard(layoutNames[layout], mfgNames[layout], 100);
 		delay(200);
 		Serial.println("Starting keyboard...");
 		keyboard->begin();
 		delay(1000);  // Give BLE time to start advertising
 		Serial.print("Keyboard mode ready - device should be discoverable as: ");
-		Serial.println(gameModeNames[gameMode]);
+		Serial.println(layoutNames[layout]);
 	}
 }
 
-void switchGameMode(GameMode gameMode) {
-	if(gameMode == currentGameMode) return;
+void switchLayout(Layout newLayout) {
+	if(newLayout == currentLayout) return;
 	
-	Serial.print("Switching to gameMode: ");
-	Serial.println(gameMode);
+	Serial.print("Switching to layout: ");
+	Serial.println(newLayout);
 	
 	// Release any active inputs before switching
 	if(nudgeActive && activeNudgeKey != 0) {
@@ -229,20 +218,20 @@ void switchGameMode(GameMode gameMode) {
 	
 	// Check if we're switching between keyboard modes (can do live)
 	// or switching to/from gamepad mode (needs restart)
-	bool needsRestart = (isGamepadMode != (gameMode == GAMEMODE_GAMEPAD));
+	bool needsRestart = (isGamepadMode != (newLayout == LAYOUT_GAMEPAD));
 	
 	if(needsRestart) {
 		// Save new layout and restart
 		Serial.println("Mode change requires restart...");
-		saveGameMode(gameMode);
+		saveLayout(newLayout);
 		
 		// Flash LED to indicate restart
 		for(int i = 0; i < 6; i++) {
-			pixels.ClearTo(ledLayoutColors[gameMode]);
-			pixels.Show();
+			pixels.fill(layoutColors[newLayout]);
+			pixels.show();
 			delay(150);
-			pixels.ClearTo(RgbColor(0));
-			pixels.Show();
+			pixels.fill(0x000000);
+			pixels.show();
 			delay(150);
 		}
 		
@@ -250,7 +239,7 @@ void switchGameMode(GameMode gameMode) {
 		delay(100);
 		ESP.restart();
 	} else {
-		// Switching between keyboard game modes (Quest <-> PC)
+		// Switching between keyboard layouts (Quest <-> PC)
 		Serial.println("Switching keyboard modes...");
 		if(keyboard != nullptr) {
 			Serial.println("Ending current keyboard...");
@@ -261,20 +250,19 @@ void switchGameMode(GameMode gameMode) {
 			delay(500);  // Wait for cleanup
 		}
 		
-		currentGameMode = gameMode;
-
-		initGameMode(gameMode);
-		saveGameMode(gameMode);
+		currentLayout = newLayout;
+		initLayout(newLayout);
+		saveLayout(newLayout);
 		
 		Serial.print("Switched to: ");
-		Serial.println(gameModeNames[gameMode]);
+		Serial.println(layoutNames[newLayout]);
 		Serial.println("Device should now be discoverable");
 	}
 }
 
 void cycleLayout() {
-	GameMode nextLayout = (GameMode)((currentGameMode + 1) % 3);
-	switchGameMode(nextLayout);
+	Layout nextLayout = (Layout)((currentLayout + 1) % 3);
+	switchLayout(nextLayout);
 }
 
 void cycleLEDMode() {
@@ -296,24 +284,19 @@ void cycleLEDMode() {
 }
 
 bool isConnected() {
-	bool connected = false;
 	if(isGamepadMode && gamepad != nullptr) {
-		connected = gamepad->isConnected();
+		return gamepad->isConnected();
 	} else if(!isGamepadMode && keyboard != nullptr) {
-		connected = keyboard->isConnected();
+		return keyboard->isConnected();
 	}
-	// Update shared connection state
-	deviceConnected = connected;
-	return connected;
+	return false;
 }
 
 void updateLED() {
-	if(deviceConnected) {
+	if(isConnected()) {
 		// Solid color when connected
-		RgbColor color = ledLayoutColors[currentGameMode];
-		color = RgbColor::LinearBlend(color, RgbColor(0), 0.8f); // Dim to 20% brightness
-		pixels.ClearTo(color);
-		pixels.Show();
+		pixels.fill(layoutColors[currentLayout]);
+		pixels.show();
 	} else {
 		// Blink when disconnected
 		if(millis() - lastBlinkTime >= 500) {
@@ -321,13 +304,11 @@ void updateLED() {
 			ledState = !ledState;
 			
 			if(ledState) {
-				RgbColor color = ledLayoutColors[currentGameMode];
-				color = RgbColor::LinearBlend(color, RgbColor(0), 0.8f); // Dim to 20% brightness
-				pixels.ClearTo(color);
+				pixels.fill(layoutColors[currentLayout]);
 			} else {
-				pixels.ClearTo(RgbColor(0));
+				pixels.fill(0x000000);
 			}
-			pixels.Show();
+			pixels.show();
 		}
 	}
 }
@@ -339,22 +320,28 @@ void updateChasePattern() {
 		lastChaseUpdate = currentTime;
 		
 		// Clear all LEDs
-		strip.ClearTo(RgbColor(0));
+		strip.clear();
 		
-		// Get current layout for color
-		GameMode gameMode = currentGameMode;
 		// Set the current position and trailing LEDs with fading effect
 		for (int i = 0; i < 3; i++) {  // 3 LED "tail"
 			int pos = (chasePosition - i + NUM_STRIP_LEDS) % NUM_STRIP_LEDS;
-			float brightness = 1.0f - (i * 0.333f);  // Fade the tail
+			int brightness = 255 - (i * 85);  // Fade the tail
 			
-			RgbColor color = ledLayoutColors[gameMode];
-			color = RgbColor::LinearBlend(RgbColor(0), color, brightness);
-				
-			strip.SetPixelColor(pos, color);
+			// Use the current layout color
+			uint32_t color = layoutColors[currentLayout];
+			uint8_t r = (color >> 16) & 0xFF;
+			uint8_t g = (color >> 8) & 0xFF;
+			uint8_t b = color & 0xFF;
+			
+			// Apply brightness
+			r = (r * brightness) / 255;
+			g = (g * brightness) / 255;
+			b = (b * brightness) / 255;
+			
+			strip.setPixelColor(pos, strip.Color(r, g, b));
 		}
 		
-		strip.Show();
+		strip.show();
 		
 		// Move to next position
 		chasePosition = (chasePosition + 1) % NUM_STRIP_LEDS;
@@ -363,8 +350,8 @@ void updateChasePattern() {
 
 void updateSolidPattern() {
 	// Fill all LEDs with the current layout color
-	strip.ClearTo(ledLayoutColors[currentGameMode]);
-	strip.Show();
+	strip.fill(layoutColors[currentLayout]);
+	strip.show();
 }
 
 void updateRainbowPattern() {
@@ -373,15 +360,14 @@ void updateRainbowPattern() {
 	if (currentTime - lastRainbowUpdate >= RAINBOW_SPEED) {
 		lastRainbowUpdate = currentTime;
 		
-		// Convert hue to color
-		HslColor hslColor(rainbowHue / 65535.0f, 1.0f, 0.5f);
-		RgbColor rgbColor(hslColor);
+		// Fill all LEDs with the same color that changes over time
+		for(int i = 0; i < NUM_STRIP_LEDS; i++) {
+			strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(rainbowHue)));
+		}
+		strip.show();
 		
-		// Use fill instead of individual pixel sets
-		strip.ClearTo(rgbColor);
-		strip.Show();
-		
-		rainbowHue += 256;
+		// Increment the hue for next update
+		rainbowHue += 256;  // Adjust speed of color change
 		if(rainbowHue > 65535) {
 			rainbowHue = 0;
 		}
@@ -410,20 +396,21 @@ void setup() {
 	Serial.begin(115200);
 	delay(1000);
 	
-	// set neo pixel pins
 	pinMode(NEOPIXEL_POWER, OUTPUT);
 	digitalWrite(NEOPIXEL_POWER, HIGH);
 	
-	// Initialize NeoPixelBus
-	pixels.Begin();
-	strip.Begin();
+	// shine onboard light
+	pixels.begin();
+	pixels.setBrightness(20);
 
 	// Start accelerometer pins and init (chip is MPU6050)
 	Wire.begin(ACCELEROMETER_SDA, ACCELEROMETER_SCL);
 	mpu.initialize();
 
 	// Initialize LED strip
-	strip.Show();  // Initialize all pixels to 'off'
+	strip.begin();
+	strip.setBrightness(50);  // Adjust brightness as needed
+	strip.show();  // Initialize all pixels to 'off'
 
 	// Set pin modes for all buttons
 	pinMode(BTN_RIGHT_FLIPPER, INPUT_PULLUP);
@@ -437,8 +424,8 @@ void setup() {
 	Serial.println("=== Pinball Controller Starting ===");
 	
 	// Load and start with last used layout
-	GameMode savedGameMode = loadGameMode();
-	initGameMode(savedGameMode);
+	Layout savedLayout = loadLayout();
+	initLayout(savedLayout);
 	
 	// Load LED mode
 	currentLEDMode = loadLEDMode();
@@ -467,31 +454,8 @@ void setup() {
 		Serial.println("MPU6050 not found!");
 		accelerometerEnabled = false;
 	}
-	// Create tasks
-	xTaskCreatePinnedToCore(
-		LEDTask,          // Task function
-		"LED Task",       // Task name
-		4096,            // Stack size
-		NULL,            // Parameters
-		1,               // Priority (1 = low priority)
-		&LEDTaskHandle,  // Task handle
-		1                // Core 1
-	);
 }
 
-void LEDTask(void *pvParameters) {
-	(void) pvParameters;
-	
-	Serial.println("LED Task started on core 0");
-	
-	while(1) {
-		updateLED();        // Update onboard NeoPixel
-		updateStripLEDs();  // Update LED strip
-		
-		// Small delay to prevent watchdog issues
-		vTaskDelay(1 / portTICK_PERIOD_MS);
-	}
-}
 void startHaptic(int motorPin, unsigned long &startTime, bool &isActive) {
 	// Non-blocking version - just start the motor
 	digitalWrite(motorPin, HIGH);
@@ -504,13 +468,6 @@ void updateHaptics() {
 	
 	if (areMotorsActive) {
 		unsigned long elapsed = currentTime - motorsStartTime;
-
-		// Add safety timeout - never run more than 100ms total
-		if (elapsed > 100) {
-			digitalWrite(FLIPPER_MOTORS, LOW);
-			areMotorsActive = false;
-			return;
-		}
 		
 		if (elapsed < 25) {
 			// First pulse - keep motor on
@@ -531,9 +488,8 @@ void updateHaptics() {
 
 void handleQuestPinballLayout(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed, 
 													bool rMagnaSavePressed, bool lMagnaSavePressed) {
-	if(keyboard == nullptr) {
-		return;
-	}
+	if(keyboard == nullptr || processingButtons) return;
+	processingButtons = true;
 	
 	// Right flipper
 	if(rightPressed && lastRightState == HIGH) {
@@ -591,11 +547,14 @@ void handleQuestPinballLayout(bool rightPressed, bool leftPressed, bool plungerP
 		}
 	}
 	lastLeftMagnaSave = lMagnaSavePressed ? LOW : HIGH;
+	
+	processingButtons = false;
 }
 
 void handlePCPinballLayout(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed, 
 													bool startPressed, bool rMagnaSavePressed, bool lMagnaSavePressed) {
-	if(keyboard == nullptr) return;
+	if(keyboard == nullptr || processingButtons) return;
+	processingButtons = true;
 	
 	// Right flipper - Right Shift
 	if(rightPressed && lastRightState == HIGH) {
@@ -660,11 +619,14 @@ void handlePCPinballLayout(bool rightPressed, bool leftPressed, bool plungerPres
 		}
 	}
 	lastLeftMagnaSave = lMagnaSavePressed ? LOW : HIGH;
+	
+	processingButtons = false;
 }
 
 void handleGamepadLayout(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed,
 												bool startPressed, bool rMagnaSavePressed, bool lMagnaSavePressed) {
-	if(gamepad == nullptr) return;
+	if(gamepad == nullptr || processingButtons) return;
+	processingButtons = true;
 
 	// Right flipper (Right shoulder)
 	if(rightPressed && lastRightState == HIGH) {
@@ -727,6 +689,8 @@ void handleGamepadLayout(bool rightPressed, bool leftPressed, bool plungerPresse
 	}
 	lastRightMagnaSave = rMagnaSavePressed ? LOW : HIGH;
 	lastLeftMagnaSave = lMagnaSavePressed ? LOW : HIGH;
+	
+	processingButtons = false;
 }
 
 // Non-blocking nudge check
@@ -747,13 +711,16 @@ void checkNudge() {
 	// Check cooldown
 	if (nudgeActive || (millis() - lastNudgeTime < NUDGE_COOLDOWN)) return;
 	
+	// Don't check nudge if we're processing buttons to avoid conflicts
+	if (processingButtons) return;
+	
 	mpu.getAcceleration(&ax, &ay, &az);
 	
 	int16_t deltaX = ax - baseX;
 	int16_t deltaY = ay - baseY;
 	
-	switch(currentGameMode) {
-		case GAMEMODE_QUEST_PINBALL:
+	switch(currentLayout) {
+		case LAYOUT_QUEST_PINBALL:
 			// Quest uses A/S/D/F for 4-way nudge
 			if (abs(deltaX) > NUDGE_THRESHOLD || abs(deltaY) > NUDGE_THRESHOLD) {
 				lastNudgeTime = millis();
@@ -764,19 +731,19 @@ void checkNudge() {
 				if (abs(deltaX) > abs(deltaY)) {
 					// X-axis dominates
 					if (deltaX > 0) {
-						activeNudgeKey = 'f';
-						if (keyboard) keyboard->press('f');
-					} else {
-						activeNudgeKey = 'd';
+						activeNudgeKey = 'f';  // Right
 						if (keyboard) keyboard->press('d');
+					} else {
+						activeNudgeKey = 'd';  // Left
+						if (keyboard) keyboard->press('f');
 					}
 				} else {
 					// Y-axis dominates
 					if (deltaY > 0) {
-						activeNudgeKey = 'a';
+						activeNudgeKey = 'a';  // Forward
 						if (keyboard) keyboard->press('a');
 					} else {
-						activeNudgeKey = 's';
+						activeNudgeKey = 's';  // Back
 						if (keyboard) keyboard->press('s');
 					}
 				}
@@ -784,7 +751,7 @@ void checkNudge() {
 			}
 			break;
 			
-		case GAMEMODE_PC_PINBALL:
+		case LAYOUT_PC_PINBALL:
 			// PC pinball uses Z/X/Space for nudge
 			if (abs(deltaX) > NUDGE_THRESHOLD) {
 				lastNudgeTime = millis();
@@ -810,13 +777,13 @@ void checkNudge() {
 			}
 			break;
 			
-		case GAMEMODE_GAMEPAD:
+		case LAYOUT_GAMEPAD:
 			// Gamepad uses analog stick
 			if (abs(deltaX) > NUDGE_THRESHOLD || abs(deltaY) > NUDGE_THRESHOLD) {
 				lastNudgeTime = millis();
 				nudgeStartTime = millis();
 				nudgeActive = true;
-				activeNudgeKey = 123;  // Just a marker
+				activeNudgeKey = 1;  // Just a marker
 				
 				// Map accelerometer to analog stick
 				int16_t stickX = 0, stickY = 0;
@@ -836,10 +803,8 @@ void checkNudge() {
 }
 
 void loop() {
-	// Update connection status
-	isConnected();
-	
-	// Update haptics
+	updateLED();
+	updateStripLEDs();
 	updateHaptics();
 	
 	// Always check nudge if accelerometer is enabled
@@ -889,30 +854,26 @@ void loop() {
 	}
 	
 	// Only process button inputs if connected AND not in LED mode switching combo
-	if(deviceConnected && !ledModeCombo) {
+	if(isConnected() && !ledModeCombo) {
 		// Route to appropriate layout handler
-		switch(currentGameMode) {
-			case GAMEMODE_QUEST_PINBALL:
+		switch(currentLayout) {
+			case LAYOUT_QUEST_PINBALL:
 				handleQuestPinballLayout(rightPressed, leftPressed, plungerPressed, specialPressed,
 														rMagnaSavePressed, lMagnaSavePressed);
 				break;
 				
-			case GAMEMODE_PC_PINBALL:
+			case LAYOUT_PC_PINBALL:
 				handlePCPinballLayout(rightPressed, leftPressed, plungerPressed, specialPressed,
 													startPressed, rMagnaSavePressed, lMagnaSavePressed);
 				break;
 				
-			case GAMEMODE_GAMEPAD:
+			case LAYOUT_GAMEPAD:
 				handleGamepadLayout(rightPressed, leftPressed, plungerPressed, specialPressed,
-														startPressed, rMagnaSavePressed, lMagnaSavePressed);
+													 startPressed, rMagnaSavePressed, lMagnaSavePressed);
 				break;
 		}
 	}
 	
 	// Always update lastStartState at the end (after it's been used in handlers)
 	lastStartState = startPressed ? LOW : HIGH;
-	
-	// Small delay to prevent watchdog issues
-	vTaskDelay(1 / portTICK_PERIOD_MS);
 }
-

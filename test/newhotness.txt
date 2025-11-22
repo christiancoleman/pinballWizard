@@ -32,15 +32,21 @@
 
 // Task handles
 TaskHandle_t LEDTaskHandle = NULL;
+TaskHandle_t MainTaskHandle = NULL;
+
+// Mutex for shared resources
+SemaphoreHandle_t layoutMutex;
+SemaphoreHandle_t connectionMutex;
+SemaphoreHandle_t ledModeMutex;
 
 NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0Ws2812xMethod> pixels(NUMPIXELS, PIN_NEOPIXEL);
 NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt1Ws2812xMethod> strip(NUM_STRIP_LEDS, PIN_LED_STRIP);
 
-// Game mode definitions
-enum GameMode {
-	GAMEMODE_QUEST_PINBALL = 0,  // Green - Quest 3 Pinball FX VR
-	GAMEMODE_PC_PINBALL = 1,     // Blue - PC Visual Pinball
-	GAMEMODE_GAMEPAD = 2         // Purple - XInput gamepad
+// Layout definitions
+enum Layout {
+	LAYOUT_QUEST_PINBALL = 0,  // Green - Quest 3 Pinball FX VR (4 buttons)
+	LAYOUT_PC_PINBALL = 1,     // Blue - PC full pinball (all buttons)
+	LAYOUT_GAMEPAD = 2         // Purple - XInput gamepad
 };
 
 // LED Mode definitions
@@ -50,7 +56,7 @@ enum LEDMode {
 	LED_MODE_RAINBOW = 2       // Color changing
 };
 
-const RgbColor ledLayoutColors[] = {
+const RgbColor layoutColors[] = {
 	RgbColor(0, 255, 0),    // Green
 	RgbColor(0, 0, 255),    // Blue
 	RgbColor(255, 0, 255)   // Purple/Magenta
@@ -79,7 +85,7 @@ Preferences preferences;
 BleKeyboard* keyboard = nullptr;
 BleGamepad* gamepad = nullptr;
 
-GameMode currentGameMode = GAMEMODE_QUEST_PINBALL;
+Layout currentLayout = LAYOUT_QUEST_PINBALL;
 bool isGamepadMode = false;
 
 // Track button states
@@ -117,50 +123,49 @@ unsigned long nudgeStartTime = 0;
 char activeNudgeKey = 0;
 bool accelerometerEnabled = false;  // Track if accelerometer is available
 
-// Bluetooth specific arrays
-const char* gameModeNames[] = {"Quest-PinballFXVR", "PC-VisualPinball", "Gamepad-4-Pinball"};
-const char* mfgNames[] = {"QPBFXVR", "PCPBVP", "GP4PB"};
+// Add mutex-like flag for button processing
+bool processingButtons = false;
 
-// uchar names for saving settings
-#define TOPLEVELNAME "pinball"
-#define LEDMODE "ledmode"
-#define GAMEMODE "gamemode"
+// Bluetooth specific arrays
+const char* layoutNames[] = {"Quest-PinballFXVR", "PC-VisualPinball", "Gamepad-4-Pinball"};
+const char* mfgNames[] = {"QPBFXVR", "PCPBVP", "GPAD4PB"};
 
 // Forward declarations for task functions
 void LEDTask(void *pvParameters);
+void MainTask(void *pvParameters);
 
-void saveGameMode(GameMode gameMode) {
-	preferences.begin(TOPLEVELNAME, false);
-	preferences.putUChar(GAMEMODE, (uint8_t)gameMode);
+void saveLayout(Layout layout) {
+	preferences.begin("pinball", false);
+	preferences.putUChar("layout", (uint8_t)layout);
 	preferences.end();
-	Serial.print("Saved gameMode: ");
-	Serial.println(gameMode);
+	Serial.print("Saved layout: ");
+	Serial.println(layout);
 }
 
-void saveLEDMode(LEDMode ledMode) {
-	preferences.begin(TOPLEVELNAME, false);
-	preferences.putUChar(LEDMODE, (uint8_t)ledMode);
+void saveLEDMode(LEDMode mode) {
+	preferences.begin("pinball", false);
+	preferences.putUChar("ledmode", (uint8_t)mode);
 	preferences.end();
-	Serial.print("Saved ledMode: ");
-	Serial.println(ledMode);
+	Serial.print("Saved LED mode: ");
+	Serial.println(mode);
 }
 
-GameMode loadGameMode() {
-	preferences.begin(TOPLEVELNAME, true);
-	uint8_t saved = preferences.getUChar(GAMEMODE, 0);
+Layout loadLayout() {
+	preferences.begin("pinball", true);
+	uint8_t saved = preferences.getUChar("layout", 0);
 	preferences.end();
 	if(saved > 2) saved = 0;  // Safety check
-	Serial.print("Loaded gameMode: ");
+	Serial.print("Loaded layout: ");
 	Serial.println(saved);
-	return (GameMode)saved;
+	return (Layout)saved;
 }
 
 LEDMode loadLEDMode() {
-	preferences.begin(TOPLEVELNAME, true);
-	uint8_t saved = preferences.getUChar(LEDMODE, 0);
+	preferences.begin("pinball", true);
+	uint8_t saved = preferences.getUChar("ledmode", 0);
 	preferences.end();
 	if(saved > 2) saved = 0;  // Safety check
-	Serial.print("Loaded ledMode: ");
+	Serial.print("Loaded LED mode: ");
 	Serial.println(saved);
 	return (LEDMode)saved;
 }
@@ -171,12 +176,14 @@ void setBLEAddress(uint8_t offset) {
 	esp_base_mac_addr_set(newMAC);
 }
 
-void initGameMode(GameMode gameMode) {
+void initLayout(Layout layout) {
 	// Set unique MAC address for each layout
-	setBLEAddress(gameMode);  // 0x10 for Quest, 0x11 for PC, 0x12 for Gamepad
+	setBLEAddress(layout);  // 0x10 for Quest, 0x11 for PC, 0x12 for Gamepad
 
-	currentGameMode = gameMode;
-	isGamepadMode = (gameMode == GAMEMODE_GAMEPAD);
+	xSemaphoreTake(layoutMutex, portMAX_DELAY);
+	currentLayout = layout;
+	isGamepadMode = (layout == LAYOUT_GAMEPAD);
+	xSemaphoreGive(layoutMutex);
 	
 	// Reset all button states when switching layouts
 	lastRightState = HIGH;
@@ -194,7 +201,7 @@ void initGameMode(GameMode gameMode) {
 	
 	if(isGamepadMode) {
 		Serial.println("Creating gamepad...");
-		gamepad = new BleGamepad(gameModeNames[gameMode], mfgNames[gameMode], 100);
+		gamepad = new BleGamepad(layoutNames[layout], mfgNames[layout], 100);
 		delay(200);
 		Serial.println("Starting gamepad...");
 		gamepad->begin();
@@ -203,21 +210,21 @@ void initGameMode(GameMode gameMode) {
 	} else {
 		// Create keyboard with appropriate name
 		Serial.print("Creating keyboard: ");
-		keyboard = new BleKeyboard(gameModeNames[gameMode], mfgNames[gameMode], 100);
+		keyboard = new BleKeyboard(layoutNames[layout], mfgNames[layout], 100);
 		delay(200);
 		Serial.println("Starting keyboard...");
 		keyboard->begin();
 		delay(1000);  // Give BLE time to start advertising
 		Serial.print("Keyboard mode ready - device should be discoverable as: ");
-		Serial.println(gameModeNames[gameMode]);
+		Serial.println(layoutNames[layout]);
 	}
 }
 
-void switchGameMode(GameMode gameMode) {
-	if(gameMode == currentGameMode) return;
+void switchLayout(Layout newLayout) {
+	if(newLayout == currentLayout) return;
 	
-	Serial.print("Switching to gameMode: ");
-	Serial.println(gameMode);
+	Serial.print("Switching to layout: ");
+	Serial.println(newLayout);
 	
 	// Release any active inputs before switching
 	if(nudgeActive && activeNudgeKey != 0) {
@@ -229,16 +236,16 @@ void switchGameMode(GameMode gameMode) {
 	
 	// Check if we're switching between keyboard modes (can do live)
 	// or switching to/from gamepad mode (needs restart)
-	bool needsRestart = (isGamepadMode != (gameMode == GAMEMODE_GAMEPAD));
+	bool needsRestart = (isGamepadMode != (newLayout == LAYOUT_GAMEPAD));
 	
 	if(needsRestart) {
 		// Save new layout and restart
 		Serial.println("Mode change requires restart...");
-		saveGameMode(gameMode);
+		saveLayout(newLayout);
 		
 		// Flash LED to indicate restart
 		for(int i = 0; i < 6; i++) {
-			pixels.ClearTo(ledLayoutColors[gameMode]);
+			pixels.ClearTo(layoutColors[newLayout]);
 			pixels.Show();
 			delay(150);
 			pixels.ClearTo(RgbColor(0));
@@ -250,7 +257,7 @@ void switchGameMode(GameMode gameMode) {
 		delay(100);
 		ESP.restart();
 	} else {
-		// Switching between keyboard game modes (Quest <-> PC)
+		// Switching between keyboard layouts (Quest <-> PC)
 		Serial.println("Switching keyboard modes...");
 		if(keyboard != nullptr) {
 			Serial.println("Ending current keyboard...");
@@ -261,24 +268,29 @@ void switchGameMode(GameMode gameMode) {
 			delay(500);  // Wait for cleanup
 		}
 		
-		currentGameMode = gameMode;
-
-		initGameMode(gameMode);
-		saveGameMode(gameMode);
+		xSemaphoreTake(layoutMutex, portMAX_DELAY);
+		currentLayout = newLayout;
+		xSemaphoreGive(layoutMutex);
+		
+		initLayout(newLayout);
+		saveLayout(newLayout);
 		
 		Serial.print("Switched to: ");
-		Serial.println(gameModeNames[gameMode]);
+		Serial.println(layoutNames[newLayout]);
 		Serial.println("Device should now be discoverable");
 	}
 }
 
 void cycleLayout() {
-	GameMode nextLayout = (GameMode)((currentGameMode + 1) % 3);
-	switchGameMode(nextLayout);
+	Layout nextLayout = (Layout)((currentLayout + 1) % 3);
+	switchLayout(nextLayout);
 }
 
 void cycleLEDMode() {
+	xSemaphoreTake(ledModeMutex, portMAX_DELAY);
 	currentLEDMode = (LEDMode)((currentLEDMode + 1) % 3);
+	xSemaphoreGive(ledModeMutex);
+	
 	saveLEDMode(currentLEDMode);
 	
 	Serial.print("LED Mode changed to: ");
@@ -297,20 +309,38 @@ void cycleLEDMode() {
 
 bool isConnected() {
 	bool connected = false;
+	
 	if(isGamepadMode && gamepad != nullptr) {
 		connected = gamepad->isConnected();
 	} else if(!isGamepadMode && keyboard != nullptr) {
 		connected = keyboard->isConnected();
 	}
+	
 	// Update shared connection state
+	xSemaphoreTake(connectionMutex, portMAX_DELAY);
 	deviceConnected = connected;
+	xSemaphoreGive(connectionMutex);
+	
 	return connected;
 }
 
 void updateLED() {
-	if(deviceConnected) {
+	bool connected = false;
+	Layout layout;
+	
+	// Get connection state
+	xSemaphoreTake(connectionMutex, portMAX_DELAY);
+	connected = deviceConnected;
+	xSemaphoreGive(connectionMutex);
+	
+	// Get current layout
+	xSemaphoreTake(layoutMutex, portMAX_DELAY);
+	layout = currentLayout;
+	xSemaphoreGive(layoutMutex);
+	
+	if(connected) {
 		// Solid color when connected
-		RgbColor color = ledLayoutColors[currentGameMode];
+		RgbColor color = layoutColors[layout];
 		color = RgbColor::LinearBlend(color, RgbColor(0), 0.8f); // Dim to 20% brightness
 		pixels.ClearTo(color);
 		pixels.Show();
@@ -321,7 +351,7 @@ void updateLED() {
 			ledState = !ledState;
 			
 			if(ledState) {
-				RgbColor color = ledLayoutColors[currentGameMode];
+				RgbColor color = layoutColors[layout];
 				color = RgbColor::LinearBlend(color, RgbColor(0), 0.8f); // Dim to 20% brightness
 				pixels.ClearTo(color);
 			} else {
@@ -342,15 +372,19 @@ void updateChasePattern() {
 		strip.ClearTo(RgbColor(0));
 		
 		// Get current layout for color
-		GameMode gameMode = currentGameMode;
+		Layout layout;
+		xSemaphoreTake(layoutMutex, portMAX_DELAY);
+		layout = currentLayout;
+		xSemaphoreGive(layoutMutex);
+		
 		// Set the current position and trailing LEDs with fading effect
 		for (int i = 0; i < 3; i++) {  // 3 LED "tail"
 			int pos = (chasePosition - i + NUM_STRIP_LEDS) % NUM_STRIP_LEDS;
 			float brightness = 1.0f - (i * 0.333f);  // Fade the tail
 			
-			RgbColor color = ledLayoutColors[gameMode];
+			RgbColor color = layoutColors[layout];
 			color = RgbColor::LinearBlend(RgbColor(0), color, brightness);
-				
+			
 			strip.SetPixelColor(pos, color);
 		}
 		
@@ -362,8 +396,14 @@ void updateChasePattern() {
 }
 
 void updateSolidPattern() {
+	// Get current layout for color
+	Layout layout;
+	xSemaphoreTake(layoutMutex, portMAX_DELAY);
+	layout = currentLayout;
+	xSemaphoreGive(layoutMutex);
+	
 	// Fill all LEDs with the current layout color
-	strip.ClearTo(ledLayoutColors[currentGameMode]);
+	strip.ClearTo(layoutColors[layout]);
 	strip.Show();
 }
 
@@ -389,7 +429,13 @@ void updateRainbowPattern() {
 }
 
 void updateStripLEDs() {
-	switch(currentLEDMode) {
+	LEDMode mode;
+	
+	xSemaphoreTake(ledModeMutex, portMAX_DELAY);
+	mode = currentLEDMode;
+	xSemaphoreGive(ledModeMutex);
+	
+	switch(mode) {
 		case LED_MODE_CHASE:
 			updateChasePattern();
 			break;
@@ -410,14 +456,18 @@ void setup() {
 	Serial.begin(115200);
 	delay(1000);
 	
-	// set neo pixel pins
+	// Create mutexes
+	layoutMutex = xSemaphoreCreateMutex();
+	connectionMutex = xSemaphoreCreateMutex();
+	ledModeMutex = xSemaphoreCreateMutex();
+	
 	pinMode(NEOPIXEL_POWER, OUTPUT);
 	digitalWrite(NEOPIXEL_POWER, HIGH);
 	
 	// Initialize NeoPixelBus
 	pixels.Begin();
 	strip.Begin();
-
+	
 	// Start accelerometer pins and init (chip is MPU6050)
 	Wire.begin(ACCELEROMETER_SDA, ACCELEROMETER_SCL);
 	mpu.initialize();
@@ -437,8 +487,8 @@ void setup() {
 	Serial.println("=== Pinball Controller Starting ===");
 	
 	// Load and start with last used layout
-	GameMode savedGameMode = loadGameMode();
-	initGameMode(savedGameMode);
+	Layout savedLayout = loadLayout();
+	initLayout(savedLayout);
 	
 	// Load LED mode
 	currentLEDMode = loadLEDMode();
@@ -467,6 +517,7 @@ void setup() {
 		Serial.println("MPU6050 not found!");
 		accelerometerEnabled = false;
 	}
+	
 	// Create tasks
 	xTaskCreatePinnedToCore(
 		LEDTask,          // Task function
@@ -475,10 +526,24 @@ void setup() {
 		NULL,            // Parameters
 		1,               // Priority (1 = low priority)
 		&LEDTaskHandle,  // Task handle
+		0                // Core 0
+	);
+	
+	xTaskCreatePinnedToCore(
+		MainTask,         // Task function
+		"Main Task",      // Task name
+		8192,            // Stack size (larger for BLE operations)
+		NULL,            // Parameters
+		2,               // Priority (higher than LED task)
+		&MainTaskHandle, // Task handle
 		1                // Core 1
 	);
+	
+	// Delete the default Arduino loop task since we're using our own tasks
+	vTaskDelete(NULL);
 }
 
+// LED Task - runs on Core 0
 void LEDTask(void *pvParameters) {
 	(void) pvParameters;
 	
@@ -492,8 +557,15 @@ void LEDTask(void *pvParameters) {
 		vTaskDelay(1 / portTICK_PERIOD_MS);
 	}
 }
+
 void startHaptic(int motorPin, unsigned long &startTime, bool &isActive) {
-	// Non-blocking version - just start the motor
+	// Always turn off first to prevent stuck-on state
+	digitalWrite(motorPin, LOW);
+	
+	// Small delay to ensure motor is off
+	delayMicroseconds(100);
+	
+	// Now start fresh
 	digitalWrite(motorPin, HIGH);
 	startTime = millis();
 	isActive = true;
@@ -504,7 +576,7 @@ void updateHaptics() {
 	
 	if (areMotorsActive) {
 		unsigned long elapsed = currentTime - motorsStartTime;
-
+		
 		// Add safety timeout - never run more than 100ms total
 		if (elapsed > 100) {
 			digitalWrite(FLIPPER_MOTORS, LOW);
@@ -531,9 +603,8 @@ void updateHaptics() {
 
 void handleQuestPinballLayout(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed, 
 													bool rMagnaSavePressed, bool lMagnaSavePressed) {
-	if(keyboard == nullptr) {
-		return;
-	}
+	if(keyboard == nullptr || processingButtons) return;
+	processingButtons = true;
 	
 	// Right flipper
 	if(rightPressed && lastRightState == HIGH) {
@@ -591,11 +662,14 @@ void handleQuestPinballLayout(bool rightPressed, bool leftPressed, bool plungerP
 		}
 	}
 	lastLeftMagnaSave = lMagnaSavePressed ? LOW : HIGH;
+	
+	processingButtons = false;
 }
 
 void handlePCPinballLayout(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed, 
 													bool startPressed, bool rMagnaSavePressed, bool lMagnaSavePressed) {
-	if(keyboard == nullptr) return;
+	if(keyboard == nullptr || processingButtons) return;
+	processingButtons = true;
 	
 	// Right flipper - Right Shift
 	if(rightPressed && lastRightState == HIGH) {
@@ -660,11 +734,14 @@ void handlePCPinballLayout(bool rightPressed, bool leftPressed, bool plungerPres
 		}
 	}
 	lastLeftMagnaSave = lMagnaSavePressed ? LOW : HIGH;
+	
+	processingButtons = false;
 }
 
 void handleGamepadLayout(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed,
 												bool startPressed, bool rMagnaSavePressed, bool lMagnaSavePressed) {
-	if(gamepad == nullptr) return;
+	if(gamepad == nullptr || processingButtons) return;
+	processingButtons = true;
 
 	// Right flipper (Right shoulder)
 	if(rightPressed && lastRightState == HIGH) {
@@ -727,6 +804,8 @@ void handleGamepadLayout(bool rightPressed, bool leftPressed, bool plungerPresse
 	}
 	lastRightMagnaSave = rMagnaSavePressed ? LOW : HIGH;
 	lastLeftMagnaSave = lMagnaSavePressed ? LOW : HIGH;
+	
+	processingButtons = false;
 }
 
 // Non-blocking nudge check
@@ -747,13 +826,16 @@ void checkNudge() {
 	// Check cooldown
 	if (nudgeActive || (millis() - lastNudgeTime < NUDGE_COOLDOWN)) return;
 	
+	// Don't check nudge if we're processing buttons to avoid conflicts
+	if (processingButtons) return;
+	
 	mpu.getAcceleration(&ax, &ay, &az);
 	
 	int16_t deltaX = ax - baseX;
 	int16_t deltaY = ay - baseY;
 	
-	switch(currentGameMode) {
-		case GAMEMODE_QUEST_PINBALL:
+	switch(currentLayout) {
+		case LAYOUT_QUEST_PINBALL:
 			// Quest uses A/S/D/F for 4-way nudge
 			if (abs(deltaX) > NUDGE_THRESHOLD || abs(deltaY) > NUDGE_THRESHOLD) {
 				lastNudgeTime = millis();
@@ -764,19 +846,19 @@ void checkNudge() {
 				if (abs(deltaX) > abs(deltaY)) {
 					// X-axis dominates
 					if (deltaX > 0) {
-						activeNudgeKey = 'f';
-						if (keyboard) keyboard->press('f');
-					} else {
-						activeNudgeKey = 'd';
+						activeNudgeKey = 'f';  // Right
 						if (keyboard) keyboard->press('d');
+					} else {
+						activeNudgeKey = 'd';  // Left
+						if (keyboard) keyboard->press('f');
 					}
 				} else {
 					// Y-axis dominates
 					if (deltaY > 0) {
-						activeNudgeKey = 'a';
+						activeNudgeKey = 'a';  // Forward
 						if (keyboard) keyboard->press('a');
 					} else {
-						activeNudgeKey = 's';
+						activeNudgeKey = 's';  // Back
 						if (keyboard) keyboard->press('s');
 					}
 				}
@@ -784,7 +866,7 @@ void checkNudge() {
 			}
 			break;
 			
-		case GAMEMODE_PC_PINBALL:
+		case LAYOUT_PC_PINBALL:
 			// PC pinball uses Z/X/Space for nudge
 			if (abs(deltaX) > NUDGE_THRESHOLD) {
 				lastNudgeTime = millis();
@@ -810,13 +892,13 @@ void checkNudge() {
 			}
 			break;
 			
-		case GAMEMODE_GAMEPAD:
+		case LAYOUT_GAMEPAD:
 			// Gamepad uses analog stick
 			if (abs(deltaX) > NUDGE_THRESHOLD || abs(deltaY) > NUDGE_THRESHOLD) {
 				lastNudgeTime = millis();
 				nudgeStartTime = millis();
 				nudgeActive = true;
-				activeNudgeKey = 123;  // Just a marker
+				activeNudgeKey = 1;  // Just a marker
 				
 				// Map accelerometer to analog stick
 				int16_t stickX = 0, stickY = 0;
@@ -835,84 +917,95 @@ void checkNudge() {
 	}
 }
 
-void loop() {
-	// Update connection status
-	isConnected();
+// Main Task - runs on Core 1
+void MainTask(void *pvParameters) {
+	(void) pvParameters;
 	
-	// Update haptics
-	updateHaptics();
+	Serial.println("Main Task started on core 1");
 	
-	// Always check nudge if accelerometer is enabled
-	if (accelerometerEnabled) {
-		checkNudge();
-	}
-	
-	// Read all button states
-	bool rightPressed = (digitalRead(BTN_RIGHT_FLIPPER) == LOW);
-	bool leftPressed = (digitalRead(BTN_LEFT_FLIPPER) == LOW);
-	bool plungerPressed = (digitalRead(BTN_PLUNGER) == LOW);
-	bool specialPressed = (digitalRead(BTN_SPECIAL) == LOW);
-	bool startPressed = (digitalRead(BTN_START_GAME) == LOW);
-	bool rMagnaSavePressed = (digitalRead(BTN_RMAGNASAVE) == LOW);
-	bool lMagnaSavePressed = (digitalRead(BTN_LMAGNASAVE) == LOW);
-	
-	// Handle layout switching (works in all modes, connected or not)
-	if(startPressed && lastStartState == HIGH) {
-		startPressTime = millis();
-		layoutSwitchHandled = false;
-	}
-	
-	if(startPressed && !layoutSwitchHandled) {
-		if(millis() - startPressTime >= 3000) {
-			cycleLayout();
-			layoutSwitchHandled = true;
+	while(1) {
+		// Update connection status
+		isConnected();
+		
+		// Update haptics
+		updateHaptics();
+		
+		// Always check nudge if accelerometer is enabled
+		if (accelerometerEnabled) {
+			//checkNudge();
 		}
-	}
-	
-	if(!startPressed) {
-		layoutSwitchHandled = false;
-	}
-	
-	// Check for LED mode switching combo
-	// Must hold: left flipper + left magna save + right flipper + right magna save
-	// Then press special to cycle
-	bool ledModeCombo = leftPressed && lMagnaSavePressed && rightPressed && rMagnaSavePressed;
-	
-	if(ledModeCombo && specialPressed && !ledModeSwitchHandled) {
-		cycleLEDMode();
-		ledModeSwitchHandled = true;
-	}
-	
-	// Reset the LED mode switch handler when special is released or combo is broken
-	if(!specialPressed || !ledModeCombo) {
-		ledModeSwitchHandled = false;
-	}
-	
-	// Only process button inputs if connected AND not in LED mode switching combo
-	if(deviceConnected && !ledModeCombo) {
-		// Route to appropriate layout handler
-		switch(currentGameMode) {
-			case GAMEMODE_QUEST_PINBALL:
-				handleQuestPinballLayout(rightPressed, leftPressed, plungerPressed, specialPressed,
-														rMagnaSavePressed, lMagnaSavePressed);
-				break;
-				
-			case GAMEMODE_PC_PINBALL:
-				handlePCPinballLayout(rightPressed, leftPressed, plungerPressed, specialPressed,
-													startPressed, rMagnaSavePressed, lMagnaSavePressed);
-				break;
-				
-			case GAMEMODE_GAMEPAD:
-				handleGamepadLayout(rightPressed, leftPressed, plungerPressed, specialPressed,
+		
+		// Read all button states
+		bool rightPressed = (digitalRead(BTN_RIGHT_FLIPPER) == LOW);
+		bool leftPressed = (digitalRead(BTN_LEFT_FLIPPER) == LOW);
+		bool plungerPressed = (digitalRead(BTN_PLUNGER) == LOW);
+		bool specialPressed = (digitalRead(BTN_SPECIAL) == LOW);
+		bool startPressed = (digitalRead(BTN_START_GAME) == LOW);
+		bool rMagnaSavePressed = (digitalRead(BTN_RMAGNASAVE) == LOW);
+		bool lMagnaSavePressed = (digitalRead(BTN_LMAGNASAVE) == LOW);
+		
+		// Handle layout switching (works in all modes, connected or not)
+		if(startPressed && lastStartState == HIGH) {
+			startPressTime = millis();
+			layoutSwitchHandled = false;
+		}
+		
+		if(startPressed && !layoutSwitchHandled) {
+			if(millis() - startPressTime >= 3000) {
+				cycleLayout();
+				layoutSwitchHandled = true;
+			}
+		}
+		
+		if(!startPressed) {
+			layoutSwitchHandled = false;
+		}
+		
+		// Check for LED mode switching combo
+		// Must hold: left flipper + left magna save + right flipper + right magna save
+		// Then press special to cycle
+		bool ledModeCombo = leftPressed && lMagnaSavePressed && rightPressed && rMagnaSavePressed;
+		
+		if(ledModeCombo && specialPressed && !ledModeSwitchHandled) {
+			cycleLEDMode();
+			ledModeSwitchHandled = true;
+		}
+		
+		// Reset the LED mode switch handler when special is released or combo is broken
+		if(!specialPressed || !ledModeCombo) {
+			ledModeSwitchHandled = false;
+		}
+		
+		// Only process button inputs if connected AND not in LED mode switching combo
+		if(!ledModeCombo) {
+			// Route to appropriate layout handler
+			switch(currentLayout) {
+				case LAYOUT_QUEST_PINBALL:
+					handleQuestPinballLayout(rightPressed, leftPressed, plungerPressed, specialPressed,
+															rMagnaSavePressed, lMagnaSavePressed);
+					break;
+					
+				case LAYOUT_PC_PINBALL:
+					handlePCPinballLayout(rightPressed, leftPressed, plungerPressed, specialPressed,
 														startPressed, rMagnaSavePressed, lMagnaSavePressed);
-				break;
+					break;
+					
+				case LAYOUT_GAMEPAD:
+					handleGamepadLayout(rightPressed, leftPressed, plungerPressed, specialPressed,
+														 startPressed, rMagnaSavePressed, lMagnaSavePressed);
+					break;
+			}
 		}
+		
+		// Always update lastStartState at the end (after it's been used in handlers)
+		lastStartState = startPressed ? LOW : HIGH;
+		
+		// Small delay to prevent watchdog issues
+		vTaskDelay(1 / portTICK_PERIOD_MS);
 	}
-	
-	// Always update lastStartState at the end (after it's been used in handlers)
-	lastStartState = startPressed ? LOW : HIGH;
-	
-	// Small delay to prevent watchdog issues
-	vTaskDelay(1 / portTICK_PERIOD_MS);
 }
 
+// Empty loop function since we're using FreeRTOS tasks
+void loop() {
+	// This will never be called since we deleted the loop task in setup()
+}
