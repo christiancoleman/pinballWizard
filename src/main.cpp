@@ -150,7 +150,7 @@ GameMode loadGameMode() {
 	preferences.begin(TOPLEVELNAME, true);
 	uint8_t saved = preferences.getUChar(GAMEMODE, 0);
 	preferences.end();
-	Serial.print("Game mode is: " + saved);
+	Serial.print("Saved mode is: " + saved);
 	if(saved > 2) saved = 0;  // Safety check
 	Serial.print("Loaded gameMode: ");
 	Serial.println(saved);
@@ -205,19 +205,22 @@ void initGameMode(GameMode gameMode) {
 	} else {
 		// Create keyboard with appropriate name
 		Serial.print("Creating keyboard: ");
+		if(keyboard != nullptr){
+			Serial.println("UT OH KEYBOARD DOES NOT EQUAL NULLPTR");
+		} else {
+			Serial.println("KEYBOARD ISSSS NULLPTR");
+		}
 		keyboard = new BleKeyboard(gameModeNames[gameMode], mfgNames[gameMode], 100);
-		delay(200);
+		//delay(1500); // made this way longer... will it help?
 		Serial.println("Starting keyboard...");
 		keyboard->begin();
-		delay(1000);  // Give BLE time to start advertising
+		//delay(1000);  // Give BLE time to start advertising
 		Serial.print("Keyboard mode ready - device should be discoverable as: ");
 		Serial.println(gameModeNames[gameMode]);
 	}
 }
 
 void switchGameMode(GameMode gameMode) {
-	if(gameMode == currentGameMode) return;
-	
 	Serial.print("Switching to gameMode: ");
 	Serial.println(gameMode);
 	
@@ -256,10 +259,10 @@ void switchGameMode(GameMode gameMode) {
 		if(keyboard != nullptr) {
 			Serial.println("Ending current keyboard...");
 			keyboard->end();
-			delay(500);  // Wait for disconnection
+			//delay(500);  // Wait for disconnection
 			delete keyboard;
 			keyboard = nullptr;
-			delay(500);  // Wait for cleanup
+			//delay(500);  // Wait for cleanup
 		}
 		
 		currentGameMode = gameMode;
@@ -409,6 +412,8 @@ void setup() {
 	
 	Serial.begin(115200);
 	delay(1000);
+
+	Serial.println("111 setup called");
 	
 	// set neo pixel pins
 	pinMode(NEOPIXEL_POWER, OUTPUT);
@@ -889,7 +894,7 @@ void loop() {
 	}
 	
 	// Only process button inputs if connected AND not in LED mode switching combo
-	if(deviceConnected && !ledModeCombo) {
+	if(isConnected() && !ledModeCombo) {
 		// Route to appropriate game mode handler
 		switch(currentGameMode) {
 			case GAMEMODE_QUEST_PINBALL:
