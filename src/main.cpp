@@ -131,6 +131,7 @@ const char* mfgNames[] = {"QPBFXVR", "PCPBVP", "GP4PB"};
 void LEDTask(void *pvParameters);
 
 void releaseAllKeys() {
+	Serial.println("[releaseAllKeys] Releasing all keys and buttons");
 	if(keyboard != nullptr) {
 		keyboard->releaseAll();
 		// Release specific keys that might be stuck
@@ -151,6 +152,7 @@ void releaseAllKeys() {
 		keyboard->release(KEY_RETURN);
 		keyboard->release(KEY_RIGHT_CTRL);
 		keyboard->release(KEY_LEFT_CTRL);
+		Serial.println("[releaseAllKeys] Keyboard keys released");
 	}
 	if(gamepad != nullptr) {
 		gamepad->release(BUTTON_10);
@@ -160,6 +162,7 @@ void releaseAllKeys() {
 		gamepad->release(BUTTON_5);
 		gamepad->setLeftThumb(0, 0);
 		gamepad->setRightThumb(0, 0);
+		Serial.println("[releaseAllKeys] Gamepad buttons released");
 	}
 }
 
@@ -167,7 +170,7 @@ void saveGameMode(GameMode gameMode) {
 	preferences.begin(TOPLEVELNAME, false);
 	preferences.putUChar(GAMEMODE, (uint8_t)gameMode);
 	preferences.end();
-	Serial.print("Saved gameMode: ");
+	Serial.print("[saveGameMode] Saved gameMode: ");
 	Serial.println(gameMode);
 }
 
@@ -175,7 +178,7 @@ void saveLEDMode(LEDMode ledMode) {
 	preferences.begin(TOPLEVELNAME, false);
 	preferences.putUChar(LEDMODE, (uint8_t)ledMode);
 	preferences.end();
-	Serial.print("Saved ledMode: ");
+	Serial.print("[saveLEDMode] Saved ledMode: ");
 	Serial.println(ledMode);
 }
 
@@ -183,9 +186,10 @@ GameMode loadGameMode() {
 	preferences.begin(TOPLEVELNAME, true);
 	uint8_t saved = preferences.getUChar(GAMEMODE, 0);
 	preferences.end();
-	Serial.print("Saved mode is: " + saved);
+	Serial.print("[loadGameMode] Raw saved value: ");
+	Serial.println(saved);
 	if(saved > 2) saved = 0;  // Safety check
-	Serial.print("Loaded gameMode: ");
+	Serial.print("[loadGameMode] Loaded gameMode: ");
 	Serial.println(saved);
 	return (GameMode)saved;
 }
@@ -195,7 +199,7 @@ LEDMode loadLEDMode() {
 	uint8_t saved = preferences.getUChar(LEDMODE, 0);
 	preferences.end();
 	if(saved > 2) saved = 0;  // Safety check
-	Serial.print("Loaded ledMode: ");
+	Serial.print("[loadLEDMode] Loaded ledMode: ");
 	Serial.println(saved);
 	return (LEDMode)saved;
 }
@@ -204,14 +208,21 @@ void setBLEAddress(uint8_t offset) {
 	uint8_t newMAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0x00};
 	newMAC[5] = 0x10 + offset;  // Different last byte for each game mode
 	esp_base_mac_addr_set(newMAC);
+	Serial.print("[setBLEAddress] MAC set with offset: ");
+	Serial.println(offset);
 }
 
 void initGameMode(GameMode gameMode) {
+	Serial.print("[initGameMode] Initializing gameMode: ");
+	Serial.println(gameMode);
+	
 	// Set unique MAC address for each game mode
 	setBLEAddress(gameMode);
 
 	currentGameMode = gameMode;
 	isGamepadMode = (gameMode == GAMEMODE_GAMEPAD);
+	Serial.print("[initGameMode] isGamepadMode: ");
+	Serial.println(isGamepadMode);
 	
 	// Reset all button states
 	lastRightState = HIGH;
@@ -221,12 +232,14 @@ void initGameMode(GameMode gameMode) {
 	lastStartState = HIGH;
 	lastRightMagnaSave = HIGH;
 	lastLeftMagnaSave = HIGH;
+	Serial.println("[initGameMode] Button states reset to HIGH");
 	
 	// Reset nudge state
 	nudgeActive = false;
 	activeNudgeKey = 0;
 	lastNudgeTime = 0;
 	nudgeStartTime = 0;
+	Serial.println("[initGameMode] Nudge state reset");
 	
 	// Reset haptic state
 	areMotorsActive = false;
@@ -234,6 +247,7 @@ void initGameMode(GameMode gameMode) {
 	
 	// Clean up any existing objects
 	if(keyboard != nullptr) {
+		Serial.println("[initGameMode] Cleaning up existing keyboard");
 		keyboard->releaseAll();  // CRITICAL: Release all keys before deleting
 		delay(100);
 		keyboard->end();
@@ -242,6 +256,7 @@ void initGameMode(GameMode gameMode) {
 		keyboard = nullptr;
 	}
 	if(gamepad != nullptr) {
+		Serial.println("[initGameMode] Cleaning up existing gamepad");
 		gamepad->release(BUTTON_10);
 		gamepad->release(BUTTON_9);
 		gamepad->release(BUTTON_1);
@@ -257,31 +272,32 @@ void initGameMode(GameMode gameMode) {
 	}
 	
 	delay(500);  // Give BLE stack time to clean up
+	Serial.println("[initGameMode] BLE cleanup delay complete");
 	
 	if(isGamepadMode) {
-		Serial.println("Creating gamepad...");
+		Serial.println("[initGameMode] Creating gamepad...");
 		gamepad = new BleGamepad(gameModeNames[gameMode], mfgNames[gameMode], 100);
 		delay(200);
-		Serial.println("Starting gamepad...");
+		Serial.println("[initGameMode] Starting gamepad...");
 		gamepad->begin();
 		delay(1000);
-		Serial.println("Gamepad mode ready - device should be discoverable");
+		Serial.println("[initGameMode] Gamepad mode ready - device should be discoverable");
 	} else {
-		Serial.print("Creating keyboard: ");
+		Serial.print("[initGameMode] Creating keyboard: ");
 		Serial.println(gameModeNames[gameMode]);
 		keyboard = new BleKeyboard(gameModeNames[gameMode], mfgNames[gameMode], 100);
 		delay(200);
-		Serial.println("Starting keyboard...");
+		Serial.println("[initGameMode] Starting keyboard...");
 		keyboard->begin();
 		delay(1000);
-		Serial.print("Keyboard mode ready - device should be discoverable as: ");
+		Serial.print("[initGameMode] Keyboard mode ready - device should be discoverable as: ");
 		Serial.println(gameModeNames[gameMode]);
 	}
 }
 
 
 void switchGameMode(GameMode gameMode) {
-	Serial.print("Switching to gameMode: ");
+	Serial.print("[switchGameMode] Switching to gameMode: ");
 	Serial.println(gameMode);
 	
 	// CRITICAL: Release ALL keys/buttons before switching
@@ -289,7 +305,7 @@ void switchGameMode(GameMode gameMode) {
 	delay(100);
 	
 	// Always restart for clean BLE state
-	Serial.println("Mode change requires restart...");
+	Serial.println("[switchGameMode] Mode change requires restart...");
 	saveGameMode(gameMode);
 	
 	// Flash LED to indicate restart
@@ -302,32 +318,29 @@ void switchGameMode(GameMode gameMode) {
 		delay(200);
 	}
 	
-	Serial.println("Restarting...");
+	Serial.println("[switchGameMode] Restarting...");
 	delay(100);
 	ESP.restart();
 }
 
 void cycleGameMode() {
 	GameMode nextGameMode = (GameMode)((currentGameMode + 1) % 3);
+	Serial.print("[cycleGameMode] Current: ");
+	Serial.print(currentGameMode);
+	Serial.print(" -> Next: ");
+	Serial.println(nextGameMode);
 	switchGameMode(nextGameMode);
 }
 
 void cycleLEDMode() {
+	LEDMode prevMode = currentLEDMode;
 	currentLEDMode = (LEDMode)((currentLEDMode + 1) % 3);
 	saveLEDMode(currentLEDMode);
 	
-	Serial.print("LED Mode changed to: ");
-	switch(currentLEDMode) {
-		case LED_MODE_CHASE:
-			Serial.println("Chase");
-			break;
-		case LED_MODE_SOLID:
-			Serial.println("Solid");
-			break;
-		case LED_MODE_RAINBOW:
-			Serial.println("Rainbow");
-			break;
-	}
+	Serial.print("[cycleLEDMode] LED Mode changed from ");
+	Serial.print(prevMode);
+	Serial.print(" to ");
+	Serial.println(currentLEDMode);
 }
 
 bool isConnected() {
@@ -337,6 +350,15 @@ bool isConnected() {
 	} else if(!isGamepadMode && keyboard != nullptr) {
 		connected = keyboard->isConnected();
 	}
+	
+	// Log connection state changes
+	if(connected != deviceConnected) {
+		Serial.print("[isConnected] Connection state changed: ");
+		Serial.print(deviceConnected);
+		Serial.print(" -> ");
+		Serial.println(connected);
+	}
+	
 	// Update shared connection state with memory barrier
 	__sync_synchronize();
 	deviceConnected = connected;
@@ -446,7 +468,7 @@ void setup() {
 	Serial.begin(115200);
 	delay(1000);
 
-	Serial.println("111 setup called");
+	Serial.println("[setup] === Setup Starting ===");
 
 	// CRITICAL: Ensure clean state on boot
 	keyboard = nullptr;
@@ -455,6 +477,7 @@ void setup() {
 	activeNudgeKey = 0;
 	areMotorsActive = false;
 	deviceConnected = false;
+	Serial.println("[setup] Global state initialized");
 	
 	// set neo pixel pins
 	pinMode(NEOPIXEL_POWER, OUTPUT);
@@ -463,6 +486,7 @@ void setup() {
 	// Initialize NeoPixelBus
 	pixels.Begin();
 	strip.Begin();
+	Serial.println("[setup] NeoPixel initialized");
 
 	// Start accelerometer pins and init (chip is MPU6050)
 	Wire.begin(ACCELEROMETER_SDA, ACCELEROMETER_SCL);
@@ -479,8 +503,9 @@ void setup() {
 	pinMode(BTN_START_GAME, INPUT_PULLUP);
 	pinMode(BTN_RMAGNASAVE, INPUT_PULLUP);
 	pinMode(BTN_LMAGNASAVE, INPUT_PULLUP);
+	Serial.println("[setup] Button pins configured");
 
-	Serial.println("=== Pinball Controller Starting ===");
+	Serial.println("[setup] === Pinball Controller Starting ===");
 	
 	// Load and start with last used game mode
 	GameMode savedGameMode = loadGameMode();
@@ -489,12 +514,12 @@ void setup() {
 	// Load LED mode
 	currentLEDMode = loadLEDMode();
 	
-	Serial.println("=== Pinball controller ready ===");
-	Serial.println("Device should now be visible for pairing");
+	Serial.println("[setup] === Pinball controller ready ===");
+	Serial.println("[setup] Device should now be visible for pairing");
 
 	// Try to configure accelerometer aka MPU6050
 	if (mpu.testConnection()) {
-		Serial.println("MPU6050 connected!");
+		Serial.println("[setup] MPU6050 connected!");
 		accelerometerEnabled = true;
 		
 		// Calibrate baseline (average of 10 readings)
@@ -509,35 +534,45 @@ void setup() {
 		baseX = sumX / 10;
 		baseY = sumY / 10;
 		baseZ = sumZ / 10;
+		Serial.print("[setup] Accelerometer calibrated - baseX: ");
+		Serial.print(baseX);
+		Serial.print(" baseY: ");
+		Serial.print(baseY);
+		Serial.print(" baseZ: ");
+		Serial.println(baseZ);
 	} else {
-		Serial.println("MPU6050 not found!");
+		Serial.println("[setup] MPU6050 not found!");
 		accelerometerEnabled = false;
 	}
+
+	accelerometerEnabled = false;
+
 	// Create tasks
-	xTaskCreatePinnedToCore(
-		LEDTask,          // Task function
-		"LED Task",       // Task name
-		4096,            // Stack size
-		NULL,            // Parameters
-		1,               // Priority (1 = low priority)
-		&LEDTaskHandle,  // Task handle
-		1                // Core 1
-	);
+	// xTaskCreatePinnedToCore(
+	// 	LEDTask,          // Task function
+	// 	"LED Task",       // Task name
+	// 	4096,            // Stack size
+	// 	NULL,            // Parameters
+	// 	1,               // Priority (1 = low priority)
+	// 	&LEDTaskHandle,  // Task handle
+	// 	0                // Core 0
+	// );
+	Serial.println("[setup] LED Task created on core 1");
 }
 
 void LEDTask(void *pvParameters) {
 	(void) pvParameters;
 	
-	Serial.println("LED Task started on core 0");
+	TickType_t xLastWakeTime = xTaskGetTickCount();
+	const TickType_t xFrequency = pdMS_TO_TICKS(20);  // 50Hz update rate
 	
 	while(1) {
-		updateLED();        // Update onboard NeoPixel
-		updateStripLEDs();  // Update LED strip
-		
-		// Small delay to prevent watchdog issues
-		vTaskDelay(1 / portTICK_PERIOD_MS);
+		//updateLED();
+		//updateStripLEDs();
+		vTaskDelayUntil(&xLastWakeTime, xFrequency);
 	}
 }
+
 void startHaptic(int motorPin, unsigned long &startTime, bool &isActive) {
 	// Non-blocking version - just start the motor
 	digitalWrite(motorPin, HIGH);
@@ -578,40 +613,49 @@ void updateHaptics() {
 void handleQuestPinballMode(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed, 
 													bool rMagnaSavePressed, bool lMagnaSavePressed) {
 	if(keyboard == nullptr) {
+		Serial.println("[handleQuestPinballMode] keyboard is null, returning");
 		return;
 	}
 	
 	// Right flipper
 	if(rightPressed && lastRightState == HIGH) {
+		Serial.println("[handleQuestPinballMode] Right flipper PRESSED - sending '6'");
 		keyboard->press('6');
 		startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 	} else if(!rightPressed && lastRightState == LOW) {
+		Serial.println("[handleQuestPinballMode] Right flipper RELEASED - releasing '6'");
 		keyboard->release('6');
 	}
 	lastRightState = rightPressed ? LOW : HIGH;
 	
 	// Left flipper
 	if(leftPressed && lastLeftState == HIGH) {
+		Serial.println("[handleQuestPinballMode] Left flipper PRESSED - sending 'u'");
 		keyboard->press('u');
 		startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 	} else if(!leftPressed && lastLeftState == LOW) {
+		Serial.println("[handleQuestPinballMode] Left flipper RELEASED - releasing 'u'");
 		keyboard->release('u');
 	}
 	lastLeftState = leftPressed ? LOW : HIGH;
 	
 	// Plunger
 	if(plungerPressed && lastPlungerState == HIGH) {
+		Serial.println("[handleQuestPinballMode] Plunger PRESSED - sending '8'");
 		keyboard->press('8');
 		startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 	} else if(!plungerPressed && lastPlungerState == LOW) {
+		Serial.println("[handleQuestPinballMode] Plunger RELEASED - releasing '8'");
 		keyboard->release('8');
 	}
 	lastPlungerState = plungerPressed ? LOW : HIGH;
 
 	// Special
 	if(specialPressed && lastSpecialState == HIGH) {
+		Serial.println("[handleQuestPinballMode] Special PRESSED - sending '5'");
 		keyboard->press('5');
 	} else if(!specialPressed && lastSpecialState == LOW) {
+		Serial.println("[handleQuestPinballMode] Special RELEASED - releasing '5'");
 		keyboard->release('5');
 	}
 	lastSpecialState = specialPressed ? LOW : HIGH;
@@ -619,52 +663,95 @@ void handleQuestPinballMode(bool rightPressed, bool leftPressed, bool plungerPre
 	// Right Nudge - D (but only if not nudging via accelerometer)
 	if(!nudgeActive) {
 		if(rMagnaSavePressed && lastRightMagnaSave == HIGH) {
+			Serial.print("[handleQuestPinballMode] Right MagnaSave PRESSED - nudgeActive: ");
+			Serial.print(nudgeActive);
+			Serial.print(" lastRightMagnaSave: ");
+			Serial.print(lastRightMagnaSave);
+			Serial.println(" - sending 'd'");
 			keyboard->press('d');
 			startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 		} else if(!rMagnaSavePressed && lastRightMagnaSave == LOW) {
+			Serial.print("[handleQuestPinballMode] Right MagnaSave RELEASED - nudgeActive: ");
+			Serial.print(nudgeActive);
+			Serial.print(" lastRightMagnaSave: ");
+			Serial.print(lastRightMagnaSave);
+			Serial.println(" - releasing 'd'");
 			keyboard->release('d');
 		}
+	} else {
+		Serial.print("[handleQuestPinballMode] Right MagnaSave SKIPPED - nudgeActive: ");
+		Serial.print(nudgeActive);
+		Serial.print(" rMagnaSavePressed: ");
+		Serial.print(rMagnaSavePressed);
+		Serial.print(" lastRightMagnaSave: ");
+		Serial.println(lastRightMagnaSave);
 	}
 	lastRightMagnaSave = rMagnaSavePressed ? LOW : HIGH;
 
 	// Left Nudge - F (but only if not nudging via accelerometer)
 	if(!nudgeActive) {
 		if(lMagnaSavePressed && lastLeftMagnaSave == HIGH) {
+			Serial.print("[handleQuestPinballMode] Left MagnaSave PRESSED - nudgeActive: ");
+			Serial.print(nudgeActive);
+			Serial.print(" lastLeftMagnaSave: ");
+			Serial.print(lastLeftMagnaSave);
+			Serial.println(" - sending 'f'");
 			keyboard->press('f');
 			startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 		} else if(!lMagnaSavePressed && lastLeftMagnaSave == LOW) {
+			Serial.print("[handleQuestPinballMode] Left MagnaSave RELEASED - nudgeActive: ");
+			Serial.print(nudgeActive);
+			Serial.print(" lastLeftMagnaSave: ");
+			Serial.print(lastLeftMagnaSave);
+			Serial.println(" - releasing 'f'");
 			keyboard->release('f');
 		}
+	} else {
+		Serial.print("[handleQuestPinballMode] Left MagnaSave SKIPPED - nudgeActive: ");
+		Serial.print(nudgeActive);
+		Serial.print(" lMagnaSavePressed: ");
+		Serial.print(lMagnaSavePressed);
+		Serial.print(" lastLeftMagnaSave: ");
+		Serial.println(lastLeftMagnaSave);
 	}
 	lastLeftMagnaSave = lMagnaSavePressed ? LOW : HIGH;
 }
 
 void handlePCPinballMode(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed, 
 													bool startPressed, bool rMagnaSavePressed, bool lMagnaSavePressed) {
-	if(keyboard == nullptr) return;
+	if(keyboard == nullptr) {
+		Serial.println("[handlePCPinballMode] keyboard is null, returning");
+		return;
+	}
 	
 	// Right flipper - Right Shift
 	if(rightPressed && lastRightState == HIGH) {
+		Serial.println("[handlePCPinballMode] Right flipper PRESSED - sending RIGHT_SHIFT");
 		keyboard->press(KEY_RIGHT_SHIFT);
 		startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 	} else if(!rightPressed && lastRightState == LOW) {
+		Serial.println("[handlePCPinballMode] Right flipper RELEASED - releasing RIGHT_SHIFT");
 		keyboard->release(KEY_RIGHT_SHIFT);
 	}
 	lastRightState = rightPressed ? LOW : HIGH;
 	
 	// Left flipper - Left Shift
 	if(leftPressed && lastLeftState == HIGH) {
+		Serial.println("[handlePCPinballMode] Left flipper PRESSED - sending LEFT_SHIFT");
 		keyboard->press(KEY_LEFT_SHIFT);
 		startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 	} else if(!leftPressed && lastLeftState == LOW) {
+		Serial.println("[handlePCPinballMode] Left flipper RELEASED - releasing LEFT_SHIFT");
 		keyboard->release(KEY_LEFT_SHIFT);
 	}
 	lastLeftState = leftPressed ? LOW : HIGH;
 	
 	// Plunger - Enter
 	if(plungerPressed && lastPlungerState == HIGH) {
+		Serial.println("[handlePCPinballMode] Plunger PRESSED - sending RETURN");
 		keyboard->press(KEY_RETURN);
 	} else if(!plungerPressed && lastPlungerState == LOW) {
+		Serial.println("[handlePCPinballMode] Plunger RELEASED - releasing RETURN");
 		keyboard->release(KEY_RETURN);
 		// going to try vibrating when the button is released
 		startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
@@ -673,16 +760,20 @@ void handlePCPinballMode(bool rightPressed, bool leftPressed, bool plungerPresse
 
 	// Coin - 5
 	if(specialPressed && lastSpecialState == HIGH) {
+		Serial.println("[handlePCPinballMode] Special PRESSED - sending '5'");
 		keyboard->press('5');
 	} else if(!specialPressed && lastSpecialState == LOW) {
+		Serial.println("[handlePCPinballMode] Special RELEASED - releasing '5'");
 		keyboard->release('5');
 	}
 	lastSpecialState = specialPressed ? LOW : HIGH;
 
 	// Start game - 1
 	if(startPressed && lastStartState == HIGH) {
+		Serial.println("[handlePCPinballMode] Start PRESSED - sending '1'");
 		keyboard->press('1');
 	} else if(!startPressed && lastStartState == LOW) {
+		Serial.println("[handlePCPinballMode] Start RELEASED - releasing '1'");
 		keyboard->release('1');
 	}
 	lastStartState = startPressed ? LOW : HIGH;
@@ -690,69 +781,116 @@ void handlePCPinballMode(bool rightPressed, bool leftPressed, bool plungerPresse
 	// Right MagnaSave - Right Ctrl (but only if not nudging via accelerometer)
 	if(!nudgeActive) {
 		if(rMagnaSavePressed && lastRightMagnaSave == HIGH) {
+			Serial.print("[handlePCPinballMode] Right MagnaSave PRESSED - nudgeActive: ");
+			Serial.print(nudgeActive);
+			Serial.print(" lastRightMagnaSave: ");
+			Serial.print(lastRightMagnaSave);
+			Serial.println(" - sending RIGHT_CTRL");
 			keyboard->press(KEY_RIGHT_CTRL);
 			startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 		} else if(!rMagnaSavePressed && lastRightMagnaSave == LOW) {
+			Serial.print("[handlePCPinballMode] Right MagnaSave RELEASED - nudgeActive: ");
+			Serial.print(nudgeActive);
+			Serial.print(" lastRightMagnaSave: ");
+			Serial.print(lastRightMagnaSave);
+			Serial.println(" - releasing RIGHT_CTRL");
 			keyboard->release(KEY_RIGHT_CTRL);
 		}
+	} else {
+		Serial.print("[handlePCPinballMode] Right MagnaSave SKIPPED - nudgeActive: ");
+		Serial.print(nudgeActive);
+		Serial.print(" rMagnaSavePressed: ");
+		Serial.print(rMagnaSavePressed);
+		Serial.print(" lastRightMagnaSave: ");
+		Serial.println(lastRightMagnaSave);
 	}
 	lastRightMagnaSave = rMagnaSavePressed ? LOW : HIGH;
 
 	// Left MagnaSave - Left Ctrl (but only if not nudging via accelerometer)
 	if(!nudgeActive) {
 		if(lMagnaSavePressed && lastLeftMagnaSave == HIGH) {
+			Serial.print("[handlePCPinballMode] Left MagnaSave PRESSED - nudgeActive: ");
+			Serial.print(nudgeActive);
+			Serial.print(" lastLeftMagnaSave: ");
+			Serial.print(lastLeftMagnaSave);
+			Serial.println(" - sending LEFT_CTRL");
 			keyboard->press(KEY_LEFT_CTRL);
 			startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 		} else if(!lMagnaSavePressed && lastLeftMagnaSave == LOW) {
+			Serial.print("[handlePCPinballMode] Left MagnaSave RELEASED - nudgeActive: ");
+			Serial.print(nudgeActive);
+			Serial.print(" lastLeftMagnaSave: ");
+			Serial.print(lastLeftMagnaSave);
+			Serial.println(" - releasing LEFT_CTRL");
 			keyboard->release(KEY_LEFT_CTRL);
 		}
+	} else {
+		Serial.print("[handlePCPinballMode] Left MagnaSave SKIPPED - nudgeActive: ");
+		Serial.print(nudgeActive);
+		Serial.print(" lMagnaSavePressed: ");
+		Serial.print(lMagnaSavePressed);
+		Serial.print(" lastLeftMagnaSave: ");
+		Serial.println(lastLeftMagnaSave);
 	}
 	lastLeftMagnaSave = lMagnaSavePressed ? LOW : HIGH;
 }
 
 void handleGamepadMode(bool rightPressed, bool leftPressed, bool plungerPressed, bool specialPressed,
 												bool startPressed, bool rMagnaSavePressed, bool lMagnaSavePressed) {
-	if(gamepad == nullptr) return;
+	if(gamepad == nullptr) {
+		Serial.println("[handleGamepadMode] gamepad is null, returning");
+		return;
+	}
 
 	// Right flipper (Right shoulder)
 	if(rightPressed && lastRightState == HIGH) {
+		Serial.println("[handleGamepadMode] Right flipper PRESSED - sending BUTTON_10");
 		gamepad->press(BUTTON_10);
 		startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 	} else if(!rightPressed && lastRightState == LOW) {
+		Serial.println("[handleGamepadMode] Right flipper RELEASED - releasing BUTTON_10");
 		gamepad->release(BUTTON_10);
 	}
 	lastRightState = rightPressed ? LOW : HIGH;
 	
 	// Left flipper (Left shoulder)
 	if(leftPressed && lastLeftState == HIGH) {
+		Serial.println("[handleGamepadMode] Left flipper PRESSED - sending BUTTON_9");
 		gamepad->press(BUTTON_9);
 		startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 	} else if(!leftPressed && lastLeftState == LOW) {
+		Serial.println("[handleGamepadMode] Left flipper RELEASED - releasing BUTTON_9");
 		gamepad->release(BUTTON_9);
 	}
 	lastLeftState = leftPressed ? LOW : HIGH;
 	
 	// Plunger (A button)
 	if(plungerPressed && lastPlungerState == HIGH) {
+		Serial.println("[handleGamepadMode] Plunger PRESSED - sending BUTTON_1");
 		gamepad->press(BUTTON_1);
 		startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 	} else if(!plungerPressed && lastPlungerState == LOW) {
+		Serial.println("[handleGamepadMode] Plunger RELEASED - releasing BUTTON_1");
 		gamepad->release(BUTTON_1);
 	}
 	lastPlungerState = plungerPressed ? LOW : HIGH;
 	
 	// Special (B button)
 	if(specialPressed && lastSpecialState == HIGH) {
+		Serial.println("[handleGamepadMode] Special PRESSED - sending BUTTON_2");
 		gamepad->press(BUTTON_2);
 	} else if(!specialPressed && lastSpecialState == LOW) {
+		Serial.println("[handleGamepadMode] Special RELEASED - releasing BUTTON_2");
 		gamepad->release(BUTTON_2);
 	}
 	lastSpecialState = specialPressed ? LOW : HIGH;
 	
 	// Switch Camera (Y button)
 	if(startPressed && lastStartState == HIGH) {
+		Serial.println("[handleGamepadMode] Start PRESSED - sending BUTTON_5");
 		gamepad->press(BUTTON_5);
 	} else if(!startPressed && lastStartState == LOW) {
+		Serial.println("[handleGamepadMode] Start RELEASED - releasing BUTTON_5");
 		gamepad->release(BUTTON_5);
 	}
 	// Note: lastStartState is updated in main loop
@@ -760,20 +898,54 @@ void handleGamepadMode(bool rightPressed, bool leftPressed, bool plungerPressed,
 	// Right MagnaSave
 	if(!nudgeActive) {
 		if(rMagnaSavePressed && lastRightMagnaSave == HIGH) {
+			Serial.print("[handleGamepadMode] Right MagnaSave PRESSED - nudgeActive: ");
+			Serial.print(nudgeActive);
+			Serial.print(" lastRightMagnaSave: ");
+			Serial.print(lastRightMagnaSave);
+			Serial.println(" - setting LeftThumb(32767, 0)");
 			gamepad->setLeftThumb(32767, 0);
 		} else if(!rMagnaSavePressed && lastRightMagnaSave == LOW) {
+			Serial.print("[handleGamepadMode] Right MagnaSave RELEASED - nudgeActive: ");
+			Serial.print(nudgeActive);
+			Serial.print(" lastRightMagnaSave: ");
+			Serial.print(lastRightMagnaSave);
+			Serial.println(" - setting LeftThumb(0, 0)");
 			gamepad->setLeftThumb(0, 0);
 		}
+	} else {
+		Serial.print("[handleGamepadMode] Right MagnaSave SKIPPED - nudgeActive: ");
+		Serial.print(nudgeActive);
+		Serial.print(" rMagnaSavePressed: ");
+		Serial.print(rMagnaSavePressed);
+		Serial.print(" lastRightMagnaSave: ");
+		Serial.println(lastRightMagnaSave);
 	}
 	lastRightMagnaSave = rMagnaSavePressed ? LOW : HIGH;
 
 	// Left MagnaSave
 	if(!nudgeActive) {
 		if(lMagnaSavePressed && lastLeftMagnaSave == HIGH) {
+			Serial.print("[handleGamepadMode] Left MagnaSave PRESSED - nudgeActive: ");
+			Serial.print(nudgeActive);
+			Serial.print(" lastLeftMagnaSave: ");
+			Serial.print(lastLeftMagnaSave);
+			Serial.println(" - setting LeftThumb(-32767, 0)");
 			gamepad->setLeftThumb(-32767, 0);
 		} else if(!lMagnaSavePressed && lastLeftMagnaSave == LOW) {
+			Serial.print("[handleGamepadMode] Left MagnaSave RELEASED - nudgeActive: ");
+			Serial.print(nudgeActive);
+			Serial.print(" lastLeftMagnaSave: ");
+			Serial.print(lastLeftMagnaSave);
+			Serial.println(" - setting LeftThumb(0, 0)");
 			gamepad->setLeftThumb(0, 0);
 		}
+	} else {
+		Serial.print("[handleGamepadMode] Left MagnaSave SKIPPED - nudgeActive: ");
+		Serial.print(nudgeActive);
+		Serial.print(" lMagnaSavePressed: ");
+		Serial.print(lMagnaSavePressed);
+		Serial.print(" lastLeftMagnaSave: ");
+		Serial.println(lastLeftMagnaSave);
 	}
 	lastLeftMagnaSave = lMagnaSavePressed ? LOW : HIGH;
 }
@@ -784,9 +956,17 @@ void checkNudge() {
 	
 	// Handle active nudge release
 	if (nudgeActive && (millis() - nudgeStartTime >= NUDGE_PRESS_TIME)) {
+		Serial.print("[checkNudge] Nudge release - activeNudgeKey: ");
+		Serial.print((int)activeNudgeKey);
+		Serial.print(" duration: ");
+		Serial.println(millis() - nudgeStartTime);
+		
 		if (keyboard && activeNudgeKey != 0) {
+			Serial.print("[checkNudge] Releasing keyboard key: ");
+			Serial.println(activeNudgeKey);
 			keyboard->release(activeNudgeKey);
 		} else if (gamepad) {
+			Serial.println("[checkNudge] Releasing gamepad thumb");
 			gamepad->setLeftThumb(0, 0);
 		}
 		nudgeActive = false;
@@ -805,6 +985,11 @@ void checkNudge() {
 		case GAMEMODE_QUEST_PINBALL:
 			// Quest uses A/S/D/F for 4-way nudge
 			if (abs(deltaX) > NUDGE_THRESHOLD || abs(deltaY) > NUDGE_THRESHOLD) {
+				Serial.print("[checkNudge] QUEST nudge triggered - deltaX: ");
+				Serial.print(deltaX);
+				Serial.print(" deltaY: ");
+				Serial.println(deltaY);
+				
 				lastNudgeTime = millis();
 				nudgeStartTime = millis();
 				nudgeActive = true;
@@ -814,18 +999,22 @@ void checkNudge() {
 					// X-axis dominates
 					if (deltaX > 0) {
 						activeNudgeKey = 'f';
+						Serial.println("[checkNudge] QUEST nudge X+ - pressing 'f'");
 						if (keyboard) keyboard->press('f');
 					} else {
 						activeNudgeKey = 'd';
+						Serial.println("[checkNudge] QUEST nudge X- - pressing 'd'");
 						if (keyboard) keyboard->press('d');
 					}
 				} else {
 					// Y-axis dominates
 					if (deltaY > 0) {
 						activeNudgeKey = 'a';
+						Serial.println("[checkNudge] QUEST nudge Y+ - pressing 'a'");
 						if (keyboard) keyboard->press('a');
 					} else {
 						activeNudgeKey = 's';
+						Serial.println("[checkNudge] QUEST nudge Y- - pressing 's'");
 						if (keyboard) keyboard->press('s');
 					}
 				}
@@ -836,24 +1025,33 @@ void checkNudge() {
 		case GAMEMODE_PC_PINBALL:
 			// PC pinball uses Z/X/Space for nudge
 			if (abs(deltaX) > NUDGE_THRESHOLD) {
+				Serial.print("[checkNudge] PC nudge X triggered - deltaX: ");
+				Serial.println(deltaX);
+				
 				lastNudgeTime = millis();
 				nudgeStartTime = millis();
 				nudgeActive = true;
 				
 				if (deltaX > 0) {
 					activeNudgeKey = '/';  // Right
+					Serial.println("[checkNudge] PC nudge X+ - pressing '/'");
 					if (keyboard) keyboard->press('/');
 				} else {
 					activeNudgeKey = 'z';  // Left
+					Serial.println("[checkNudge] PC nudge X- - pressing 'z'");
 					if (keyboard) keyboard->press('z');
 				}
 				startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 			} else if (abs(deltaY) > NUDGE_THRESHOLD) {
+				Serial.print("[checkNudge] PC nudge Y triggered - deltaY: ");
+				Serial.println(deltaY);
+				
 				lastNudgeTime = millis();
 				nudgeStartTime = millis();
 				nudgeActive = true;
 				
 				activeNudgeKey = ' ';  // Space for forward/back
+				Serial.println("[checkNudge] PC nudge Y - pressing SPACE");
 				if (keyboard) keyboard->press(' ');
 				startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 			}
@@ -862,6 +1060,11 @@ void checkNudge() {
 		case GAMEMODE_GAMEPAD:
 			// Gamepad uses analog stick
 			if (abs(deltaX) > NUDGE_THRESHOLD || abs(deltaY) > NUDGE_THRESHOLD) {
+				Serial.print("[checkNudge] GAMEPAD nudge triggered - deltaX: ");
+				Serial.print(deltaX);
+				Serial.print(" deltaY: ");
+				Serial.println(deltaY);
+				
 				lastNudgeTime = millis();
 				nudgeStartTime = millis();
 				nudgeActive = true;
@@ -877,6 +1080,11 @@ void checkNudge() {
 					stickY = (deltaY > 0) ? 32767 : -32767;
 				}
 				
+				Serial.print("[checkNudge] GAMEPAD nudge - stickX: ");
+				Serial.print(stickX);
+				Serial.print(" stickY: ");
+				Serial.println(stickY);
+				
 				if (gamepad) gamepad->setLeftThumb(stickX, stickY);
 				startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 			}
@@ -886,7 +1094,7 @@ void checkNudge() {
 
 void loop() {
 	// Update connection status
-	isConnected();
+	bool connected = isConnected();
 	
 	// Update haptics
 	updateHaptics();
@@ -909,10 +1117,12 @@ void loop() {
 	if(startPressed && lastStartState == HIGH) {
 		startPressTime = millis();
 		gameModeSwitchHandled = false;
+		Serial.println("[loop] Start button pressed - timing for mode switch");
 	}
 	
 	if(startPressed && !gameModeSwitchHandled) {
 		if(millis() - startPressTime >= 3000) {
+			Serial.println("[loop] Start held 3s - cycling game mode");
 			cycleGameMode();
 			gameModeSwitchHandled = true;
 		}
@@ -928,6 +1138,7 @@ void loop() {
 	bool ledModeCombo = leftPressed && lMagnaSavePressed && rightPressed && rMagnaSavePressed;
 	
 	if(ledModeCombo && specialPressed && !ledModeSwitchHandled) {
+		Serial.println("[loop] LED mode combo detected - cycling LED mode");
 		cycleLEDMode();
 		ledModeSwitchHandled = true;
 	}
@@ -938,7 +1149,7 @@ void loop() {
 	}
 	
 	// Only process button inputs if connected AND not in LED mode switching combo
-	if(isConnected() && !ledModeCombo) {
+	if(connected && !ledModeCombo) {
 		// Route to appropriate game mode handler
 		switch(currentGameMode) {
 			case GAMEMODE_QUEST_PINBALL:
@@ -956,12 +1167,25 @@ void loop() {
 														startPressed, rMagnaSavePressed, lMagnaSavePressed);
 				break;
 		}
+	} else if(!connected) {
+		// Periodic debug when disconnected
+		static unsigned long lastDisconnectLog = 0;
+		if(millis() - lastDisconnectLog > 5000) {
+			lastDisconnectLog = millis();
+			Serial.print("[loop] Not connected - gameMode: ");
+			Serial.print(currentGameMode);
+			Serial.print(" isGamepadMode: ");
+			Serial.print(isGamepadMode);
+			Serial.print(" keyboard: ");
+			Serial.print(keyboard != nullptr ? "valid" : "null");
+			Serial.print(" gamepad: ");
+			Serial.println(gamepad != nullptr ? "valid" : "null");
+		}
 	}
 	
 	// Always update lastStartState at the end (after it's been used in handlers)
 	lastStartState = startPressed ? LOW : HIGH;
 	
 	// Small delay to prevent watchdog issues
-	vTaskDelay(1 / portTICK_PERIOD_MS);
+	//vTaskDelay(1 / portTICK_PERIOD_MS);
 }
-
