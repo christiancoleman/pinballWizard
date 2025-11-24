@@ -123,12 +123,45 @@ const char* gameModeNames[] = {"Quest-PinballFXVR", "PC-VisualPinball", "Gamepad
 const char* mfgNames[] = {"QPBFXVR", "PCPBVP", "GP4PB"};
 
 // uchar names for saving settings
-#define TOPLEVELNAME "pinball"
+#define TOPLEVELNAME "pinballv2"
 #define LEDMODE "ledmode"
 #define GAMEMODE "gamemode"
 
 // Forward declarations for task functions
 void LEDTask(void *pvParameters);
+
+void releaseAllKeys() {
+	if(keyboard != nullptr) {
+		keyboard->releaseAll();
+		// Release specific keys that might be stuck
+		keyboard->release('6');
+		keyboard->release('u');
+		keyboard->release('8');
+		keyboard->release('5');
+		keyboard->release('d');
+		keyboard->release('f');
+		keyboard->release('a');
+		keyboard->release('s');
+		keyboard->release('z');
+		keyboard->release('/');
+		keyboard->release(' ');
+		keyboard->release('1');
+		keyboard->release(KEY_RIGHT_SHIFT);
+		keyboard->release(KEY_LEFT_SHIFT);
+		keyboard->release(KEY_RETURN);
+		keyboard->release(KEY_RIGHT_CTRL);
+		keyboard->release(KEY_LEFT_CTRL);
+	}
+	if(gamepad != nullptr) {
+		gamepad->release(BUTTON_10);
+		gamepad->release(BUTTON_9);
+		gamepad->release(BUTTON_1);
+		gamepad->release(BUTTON_2);
+		gamepad->release(BUTTON_5);
+		gamepad->setLeftThumb(0, 0);
+		gamepad->setRightThumb(0, 0);
+	}
+}
 
 void saveGameMode(GameMode gameMode) {
 	preferences.begin(TOPLEVELNAME, false);
@@ -175,12 +208,12 @@ void setBLEAddress(uint8_t offset) {
 
 void initGameMode(GameMode gameMode) {
 	// Set unique MAC address for each game mode
-	setBLEAddress(gameMode);  // 0x10 for Quest, 0x11 for PC, 0x12 for Gamepad
+	setBLEAddress(gameMode);
 
 	currentGameMode = gameMode;
 	isGamepadMode = (gameMode == GAMEMODE_GAMEPAD);
 	
-	// Reset all button states when switching game mode
+	// Reset all button states
 	lastRightState = HIGH;
 	lastLeftState = HIGH;
 	lastPlungerState = HIGH;
@@ -193,6 +226,37 @@ void initGameMode(GameMode gameMode) {
 	nudgeActive = false;
 	activeNudgeKey = 0;
 	lastNudgeTime = 0;
+	nudgeStartTime = 0;
+	
+	// Reset haptic state
+	areMotorsActive = false;
+	motorsStartTime = 0;
+	
+	// Clean up any existing objects
+	if(keyboard != nullptr) {
+		keyboard->releaseAll();  // CRITICAL: Release all keys before deleting
+		delay(100);
+		keyboard->end();
+		delay(100);
+		delete keyboard;
+		keyboard = nullptr;
+	}
+	if(gamepad != nullptr) {
+		gamepad->release(BUTTON_10);
+		gamepad->release(BUTTON_9);
+		gamepad->release(BUTTON_1);
+		gamepad->release(BUTTON_2);
+		gamepad->release(BUTTON_5);
+		gamepad->setLeftThumb(0, 0);
+		gamepad->setRightThumb(0, 0);
+		delay(100);
+		gamepad->end();
+		delay(100);
+		delete gamepad;
+		gamepad = nullptr;
+	}
+	
+	delay(500);  // Give BLE stack time to clean up
 	
 	if(isGamepadMode) {
 		Serial.println("Creating gamepad...");
@@ -200,80 +264,47 @@ void initGameMode(GameMode gameMode) {
 		delay(200);
 		Serial.println("Starting gamepad...");
 		gamepad->begin();
-		delay(1000);  // Give BLE time to start advertising
+		delay(1000);
 		Serial.println("Gamepad mode ready - device should be discoverable");
 	} else {
-		// Create keyboard with appropriate name
 		Serial.print("Creating keyboard: ");
-		if(keyboard != nullptr){
-			Serial.println("UT OH KEYBOARD DOES NOT EQUAL NULLPTR");
-		} else {
-			Serial.println("KEYBOARD ISSSS NULLPTR");
-		}
+		Serial.println(gameModeNames[gameMode]);
 		keyboard = new BleKeyboard(gameModeNames[gameMode], mfgNames[gameMode], 100);
-		//delay(1500); // made this way longer... will it help?
+		delay(200);
 		Serial.println("Starting keyboard...");
 		keyboard->begin();
-		//delay(1000);  // Give BLE time to start advertising
+		delay(1000);
 		Serial.print("Keyboard mode ready - device should be discoverable as: ");
 		Serial.println(gameModeNames[gameMode]);
 	}
 }
 
+
 void switchGameMode(GameMode gameMode) {
 	Serial.print("Switching to gameMode: ");
 	Serial.println(gameMode);
 	
-	// Release any active inputs before switching
-	if(nudgeActive && activeNudgeKey != 0) {
-		if(keyboard) keyboard->release(activeNudgeKey);
-		if(gamepad) gamepad->setLeftThumb(0, 0);
-		nudgeActive = false;
-		activeNudgeKey = 0;
+	// CRITICAL: Release ALL keys/buttons before switching
+	releaseAllKeys();
+	delay(100);
+	
+	// Always restart for clean BLE state
+	Serial.println("Mode change requires restart...");
+	saveGameMode(gameMode);
+	
+	// Flash LED to indicate restart
+	for(int i = 0; i < 3; i++) {
+		pixels.ClearTo(ledLayoutColors[gameMode]);
+		pixels.Show();
+		delay(200);
+		pixels.ClearTo(RgbColor(0));
+		pixels.Show();
+		delay(200);
 	}
 	
-	// Check if we're switching between keyboard modes (can do live)
-	// or switching to/from gamepad mode (needs restart)
-	bool needsRestart = (isGamepadMode != (gameMode == GAMEMODE_GAMEPAD));
-	
-	if(needsRestart) {
-		Serial.println("Mode change requires restart...");
-		saveGameMode(gameMode);
-		
-		// Flash LED to indicate restart
-		for(int i = 0; i < 6; i++) {
-			pixels.ClearTo(ledLayoutColors[gameMode]);
-			pixels.Show();
-			delay(150);
-			pixels.ClearTo(RgbColor(0));
-			pixels.Show();
-			delay(150);
-		}
-		
-		Serial.println("Restarting...");
-		delay(100);
-		ESP.restart();
-	} else {
-		// Switching between keyboard game modes (Quest <-> PC)
-		Serial.println("Switching keyboard modes...");
-		if(keyboard != nullptr) {
-			Serial.println("Ending current keyboard...");
-			keyboard->end();
-			//delay(500);  // Wait for disconnection
-			delete keyboard;
-			keyboard = nullptr;
-			//delay(500);  // Wait for cleanup
-		}
-		
-		currentGameMode = gameMode;
-
-		initGameMode(gameMode);
-		saveGameMode(gameMode);
-		
-		Serial.print("Switched to: ");
-		Serial.println(gameModeNames[gameMode]);
-		Serial.println("Device should now be discoverable");
-	}
+	Serial.println("Restarting...");
+	delay(100);
+	ESP.restart();
 }
 
 void cycleGameMode() {
@@ -306,8 +337,10 @@ bool isConnected() {
 	} else if(!isGamepadMode && keyboard != nullptr) {
 		connected = keyboard->isConnected();
 	}
-	// Update shared connection state
+	// Update shared connection state with memory barrier
+	__sync_synchronize();
 	deviceConnected = connected;
+	__sync_synchronize();
 	return connected;
 }
 
@@ -414,6 +447,14 @@ void setup() {
 	delay(1000);
 
 	Serial.println("111 setup called");
+
+	// CRITICAL: Ensure clean state on boot
+	keyboard = nullptr;
+	gamepad = nullptr;
+	nudgeActive = false;
+	activeNudgeKey = 0;
+	areMotorsActive = false;
+	deviceConnected = false;
 	
 	// set neo pixel pins
 	pinMode(NEOPIXEL_POWER, OUTPUT);
@@ -650,6 +691,7 @@ void handlePCPinballMode(bool rightPressed, bool leftPressed, bool plungerPresse
 	if(!nudgeActive) {
 		if(rMagnaSavePressed && lastRightMagnaSave == HIGH) {
 			keyboard->press(KEY_RIGHT_CTRL);
+			startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 		} else if(!rMagnaSavePressed && lastRightMagnaSave == LOW) {
 			keyboard->release(KEY_RIGHT_CTRL);
 		}
@@ -660,6 +702,7 @@ void handlePCPinballMode(bool rightPressed, bool leftPressed, bool plungerPresse
 	if(!nudgeActive) {
 		if(lMagnaSavePressed && lastLeftMagnaSave == HIGH) {
 			keyboard->press(KEY_LEFT_CTRL);
+			startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 		} else if(!lMagnaSavePressed && lastLeftMagnaSave == LOW) {
 			keyboard->release(KEY_LEFT_CTRL);
 		}
@@ -713,24 +756,25 @@ void handleGamepadMode(bool rightPressed, bool leftPressed, bool plungerPressed,
 		gamepad->release(BUTTON_5);
 	}
 	// Note: lastStartState is updated in main loop
-	
-	// Right/Left Nudge via buttons (only if not nudging via accelerometer)
+
+	// Right MagnaSave
 	if(!nudgeActive) {
-		if(rMagnaSavePressed && !lMagnaSavePressed) {
-			gamepad->setLeftThumb(32767, 0);  // Right
-			if(lastRightMagnaSave == HIGH) {
-				startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
-			}
-		} else if(lMagnaSavePressed && !rMagnaSavePressed) {
-			gamepad->setLeftThumb(-32767, 0);  // Left
-			if(lastLeftMagnaSave == HIGH) {
-				startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
-			}
-		} else {
-			gamepad->setLeftThumb(0, 0);  // Center
+		if(rMagnaSavePressed && lastRightMagnaSave == HIGH) {
+			gamepad->setLeftThumb(32767, 0);
+		} else if(!rMagnaSavePressed && lastRightMagnaSave == LOW) {
+			gamepad->setLeftThumb(0, 0);
 		}
 	}
 	lastRightMagnaSave = rMagnaSavePressed ? LOW : HIGH;
+
+	// Left MagnaSave
+	if(!nudgeActive) {
+		if(lMagnaSavePressed && lastLeftMagnaSave == HIGH) {
+			gamepad->setLeftThumb(-32767, 0);
+		} else if(!lMagnaSavePressed && lastLeftMagnaSave == LOW) {
+			gamepad->setLeftThumb(0, 0);
+		}
+	}
 	lastLeftMagnaSave = lMagnaSavePressed ? LOW : HIGH;
 }
 
