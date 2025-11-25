@@ -1,4 +1,5 @@
 #include <NeoPixelBus.h>
+#include <Adafruit_NeoPixel.h>
 #include <BleKeyboard.h>
 #include <BleGamepad.h>
 #include <NimBLEDevice.h>
@@ -33,7 +34,7 @@
 // Task handles
 TaskHandle_t LEDTaskHandle = NULL;
 
-NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0Ws2812xMethod> pixels(NUMPIXELS, PIN_NEOPIXEL);
+Adafruit_NeoPixel pixels(NUMPIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt1Ws2812xMethod> strip(NUM_STRIP_LEDS, PIN_LED_STRIP);
 
 // Game mode definitions
@@ -54,6 +55,12 @@ const RgbColor ledLayoutColors[] = {
 	RgbColor(0, 255, 0),    // Green
 	RgbColor(0, 0, 255),    // Blue
 	RgbColor(255, 0, 255)   // Purple/Magenta
+};
+
+const uint32_t layoutColors[] = {
+	0x00FF00,  // Green
+	0x0000FF,  // Blue
+	0xFF00FF   // Purple/Magenta
 };
 
 // Variables for the chase pattern
@@ -123,7 +130,7 @@ const char* gameModeNames[] = {"Quest-PinballFXVR", "PC-VisualPinball", "Gamepad
 const char* mfgNames[] = {"QPBFXVR", "PCPBVP", "GP4PB"};
 
 // uchar names for saving settings
-#define TOPLEVELNAME "pinballv2"
+#define TOPLEVELNAME "pinballv3"
 #define LEDMODE "ledmode"
 #define GAMEMODE "gamemode"
 
@@ -295,7 +302,6 @@ void initGameMode(GameMode gameMode) {
 	}
 }
 
-
 void switchGameMode(GameMode gameMode) {
 	Serial.print("[switchGameMode] Switching to gameMode: ");
 	Serial.println(gameMode);
@@ -309,13 +315,13 @@ void switchGameMode(GameMode gameMode) {
 	saveGameMode(gameMode);
 	
 	// Flash LED to indicate restart
-	for(int i = 0; i < 3; i++) {
-		pixels.ClearTo(ledLayoutColors[gameMode]);
-		pixels.Show();
-		delay(200);
-		pixels.ClearTo(RgbColor(0));
-		pixels.Show();
-		delay(200);
+	for(int i = 0; i < 6; i++) {
+		pixels.fill(layoutColors[gameMode]);
+		pixels.show();
+		delay(150);
+		pixels.fill(0x000000);
+		pixels.show();
+		delay(150);
 	}
 	
 	Serial.println("[switchGameMode] Restarting...");
@@ -369,10 +375,8 @@ bool isConnected() {
 void updateLED() {
 	if(deviceConnected) {
 		// Solid color when connected
-		RgbColor color = ledLayoutColors[currentGameMode];
-		color = RgbColor::LinearBlend(color, RgbColor(0), 0.8f); // Dim to 20% brightness
-		pixels.ClearTo(color);
-		pixels.Show();
+		pixels.fill(layoutColors[currentGameMode]);
+		pixels.show();
 	} else {
 		// Blink when disconnected
 		if(millis() - lastBlinkTime >= 500) {
@@ -380,13 +384,11 @@ void updateLED() {
 			ledState = !ledState;
 			
 			if(ledState) {
-				RgbColor color = ledLayoutColors[currentGameMode];
-				color = RgbColor::LinearBlend(color, RgbColor(0), 0.8f); // Dim to 20% brightness
-				pixels.ClearTo(color);
+				pixels.fill(layoutColors[currentGameMode]);
 			} else {
-				pixels.ClearTo(RgbColor(0));
+				pixels.fill(0x000000);
 			}
-			pixels.Show();
+			pixels.show();
 		}
 	}
 }
@@ -484,13 +486,18 @@ void setup() {
 	digitalWrite(NEOPIXEL_POWER, HIGH);
 	
 	// Initialize NeoPixelBus
-	pixels.Begin();
 	strip.Begin();
 	Serial.println("[setup] NeoPixel initialized");
 
 	// Start accelerometer pins and init (chip is MPU6050)
 	Wire.begin(ACCELEROMETER_SDA, ACCELEROMETER_SCL);
 	mpu.initialize();
+
+	// shine onboard light
+	pixels.begin();
+	pixels.setBrightness(20);
+	pixels.fill(layoutColors[currentGameMode]);
+	pixels.show();
 
 	// Initialize LED strip
 	strip.Show();  // Initialize all pixels to 'off'
@@ -567,7 +574,7 @@ void LEDTask(void *pvParameters) {
 	const TickType_t xFrequency = pdMS_TO_TICKS(20);  // 50Hz update rate
 	
 	while(1) {
-		//updateLED();
+		updateLED();
 		//updateStripLEDs();
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
 	}
@@ -619,43 +626,43 @@ void handleQuestPinballMode(bool rightPressed, bool leftPressed, bool plungerPre
 	
 	// Right flipper
 	if(rightPressed && lastRightState == HIGH) {
-		Serial.println("[handleQuestPinballMode] Right flipper PRESSED - sending '6'");
+		//Serial.println("[handleQuestPinballMode] Right flipper PRESSED - sending '6'");
 		keyboard->press('6');
 		startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 	} else if(!rightPressed && lastRightState == LOW) {
-		Serial.println("[handleQuestPinballMode] Right flipper RELEASED - releasing '6'");
+		//Serial.println("[handleQuestPinballMode] Right flipper RELEASED - releasing '6'");
 		keyboard->release('6');
 	}
 	lastRightState = rightPressed ? LOW : HIGH;
 	
 	// Left flipper
 	if(leftPressed && lastLeftState == HIGH) {
-		Serial.println("[handleQuestPinballMode] Left flipper PRESSED - sending 'u'");
+		//Serial.println("[handleQuestPinballMode] Left flipper PRESSED - sending 'u'");
 		keyboard->press('u');
 		startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 	} else if(!leftPressed && lastLeftState == LOW) {
-		Serial.println("[handleQuestPinballMode] Left flipper RELEASED - releasing 'u'");
+		//Serial.println("[handleQuestPinballMode] Left flipper RELEASED - releasing 'u'");
 		keyboard->release('u');
 	}
 	lastLeftState = leftPressed ? LOW : HIGH;
 	
 	// Plunger
 	if(plungerPressed && lastPlungerState == HIGH) {
-		Serial.println("[handleQuestPinballMode] Plunger PRESSED - sending '8'");
+		//Serial.println("[handleQuestPinballMode] Plunger PRESSED - sending '8'");
 		keyboard->press('8');
 		startHaptic(FLIPPER_MOTORS, motorsStartTime, areMotorsActive);
 	} else if(!plungerPressed && lastPlungerState == LOW) {
-		Serial.println("[handleQuestPinballMode] Plunger RELEASED - releasing '8'");
+		//Serial.println("[handleQuestPinballMode] Plunger RELEASED - releasing '8'");
 		keyboard->release('8');
 	}
 	lastPlungerState = plungerPressed ? LOW : HIGH;
 
 	// Special
 	if(specialPressed && lastSpecialState == HIGH) {
-		Serial.println("[handleQuestPinballMode] Special PRESSED - sending '5'");
+		//Serial.println("[handleQuestPinballMode] Special PRESSED - sending '5'");
 		keyboard->press('5');
 	} else if(!specialPressed && lastSpecialState == LOW) {
-		Serial.println("[handleQuestPinballMode] Special RELEASED - releasing '5'");
+		//Serial.println("[handleQuestPinballMode] Special RELEASED - releasing '5'");
 		keyboard->release('5');
 	}
 	lastSpecialState = specialPressed ? LOW : HIGH;
@@ -1188,4 +1195,5 @@ void loop() {
 	
 	// Small delay to prevent watchdog issues
 	//vTaskDelay(1 / portTICK_PERIOD_MS);
+	//delay(10);
 }
