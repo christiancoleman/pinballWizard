@@ -1,7 +1,10 @@
 #pragma once
 
 #include <BleKeyboard.h>
+#include <BleGamepad.h>
 #include <Arduino.h>
+#include "questPinballFXVR.hpp"
+#include "solenoidProcessor.hpp"
 
 // 74HC165 Shift Register (SR) Pins
 #define SR_DATA           7    // QH - Serial data out
@@ -18,14 +21,6 @@
 #define BTN_BIT_LMAGNASAVE    6  // G - Left MagnaSave
 #define BTN_BIT_LFLIPPER      7  // H - Left Flipper
 
-// Quest Pinball FX VR key mappings
-#define KEY_RFLIPPER      '6'
-#define KEY_LFLIPPER      'u'
-#define KEY_PLUNGER       '8'
-#define KEY_SPECIAL       '5'
-#define KEY_RMAGNASAVE    'd'
-#define KEY_LMAGNASAVE    'f'
-
 const uint8_t buttonBits[] = {
 	BTN_BIT_RMAGNASAVE,
 	BTN_BIT_RFLIPPER,
@@ -35,17 +30,10 @@ const uint8_t buttonBits[] = {
 	BTN_BIT_LFLIPPER
 };
 
-const char buttonKeys[] = {
-	KEY_RMAGNASAVE,
-	KEY_RFLIPPER,
-	KEY_PLUNGER,
-	KEY_SPECIAL,
-	KEY_LMAGNASAVE,
-	KEY_LFLIPPER
-};
-
 const uint8_t NUM_BUTTONS = sizeof(buttonBits);
 
 const unsigned long DEBOUNCE_MS = 5;  // try 5–10ms
 
 void processQuestButtons(BleKeyboard* keyboard);
+void processVPinButtons(BleKeyboard* keyboard);
+void processGamepadButtons(BleGamepad* gamepad);

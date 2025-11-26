@@ -30,7 +30,7 @@ void processQuestButtons(BleKeyboard* keyboard){
 	for (uint8_t i = 0; i < NUM_BUTTONS; i++) {
 		uint8_t bit = buttonBits[i];
 		char key = buttonKeys[i];
-
+		
 		bool rawPressed = !(raw & (1 << bit));
 		bool lastRawPressed = !(lastRawState & (1 << bit));
 
@@ -43,10 +43,16 @@ void processQuestButtons(BleKeyboard* keyboard){
 		if ((now - lastChangeTime[i]) >= DEBOUNCE_MS) {
 			bool stablePressed = !(stableState & (1 << bit));
 			if (rawPressed != stablePressed) {
+				bool leftFlipper = (bit == BTN_BIT_LFLIPPER);
+				bool rightFlipper = (bit == BTN_BIT_RFLIPPER);
 				// Edge detected on debounced state
 				if (rawPressed) {
+					if(leftFlipper) sendLeftFlipperDataHigh();
+					else if(rightFlipper) sendRightFlipperDataHigh();
 					keyboard->press(key);
 				} else {
+					if(leftFlipper) sendLeftFlipperDataLow();
+					else if(rightFlipper) sendRightFlipperDataLow();
 					keyboard->release(key);
 				}
 
