@@ -11,4 +11,4 @@ enum GAME_MODE : uint8_t {
 
 uint8_t getControllerMode();
 
-void saveControllerMode();
+void saveControllerMode(int);
