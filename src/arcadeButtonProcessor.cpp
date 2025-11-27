@@ -1,8 +1,17 @@
 #include "arcadeButtonProcessor.hpp"
 
+extern bool processingButtons;
+extern bool nudgeActive; 
+
 uint8_t stableState = 0xFF;           // debounced state (1 = released)
 uint8_t lastRawState = 0xFF;          // last raw read
 unsigned long lastChangeTime[8] = {0};
+
+#ifdef BUTTON_DEBUG
+static void logButtonEvent(uint8_t bit, uint8_t key, const char* action) {
+	Serial.printf("Button bit %u -> key 0x%02X %s\n", bit, key, action);
+}
+#endif
 
 uint8_t readShiftRegister() {
 	digitalWrite(SR_LOAD, LOW);
@@ -24,13 +33,21 @@ uint8_t readShiftRegister() {
 }
 
 void processKeyboardButtons(BleKeyboard* keyboard){
+	const ButtonMapping* map = questButtonMap;
+	uint8_t totalButtons = QUEST_NUM_BUTTONS;
+
+	if(currentGameMode == PC_VISUAL_PINBALL){
+		map = pcButtonMap;
+		totalButtons = PC_NUM_BUTTONS;
+	}
+
 	uint8_t raw = readShiftRegister();
 	unsigned long now = millis();
 
-	for (uint8_t i = 0; i < NUM_BUTTONS; i++) {
-		uint8_t bit = buttonBits[i];
-		char key = buttonKeys[i];
-		
+	for (uint8_t i = 0; i < totalButtons; i++) {
+		uint8_t bit = map[i].bit;
+		char key = map[i].key;
+	
 		bool rawPressed = !(raw & (1 << bit));
 		bool lastRawPressed = !(lastRawState & (1 << bit));
 
@@ -45,15 +62,27 @@ void processKeyboardButtons(BleKeyboard* keyboard){
 			if (rawPressed != stablePressed) {
 				bool leftFlipper = (bit == BTN_BIT_LFLIPPER);
 				bool rightFlipper = (bit == BTN_BIT_RFLIPPER);
+				bool leftNudge = (bit == BTN_BIT_LMAGNASAVE);
+				bool rightNudge = (bit == BTN_BIT_RMAGNASAVE);
 				// Edge detected on debounced state
 				if (rawPressed) {
+					processingButtons = true;
 					if(leftFlipper) sendLeftFlipperDataHigh();
 					else if(rightFlipper) sendRightFlipperDataHigh();
+					else if(leftNudge && nudgeActive) return;
+					else if(rightNudge && nudgeActive) return;
 					keyboard->press(key);
+#ifdef BUTTON_DEBUG
+					logButtonEvent(bit, key, "pressed");
+#endif
 				} else {
+					processingButtons = false;
 					if(leftFlipper) sendLeftFlipperDataLow();
 					else if(rightFlipper) sendRightFlipperDataLow();
 					keyboard->release(key);
+#ifdef BUTTON_DEBUG
+					logButtonEvent(bit, key, "released");
+#endif
 				}
 
 				// Update debounced state bit
@@ -72,8 +101,4 @@ void processKeyboardButtons(BleKeyboard* keyboard){
 			lastRawState |= (1 << bit);
 		}
 	}
-}
-
-
-void processGamepadButtons(BleGamepad* gamepad){
 }
