@@ -23,7 +23,7 @@ uint8_t readShiftRegister() {
 	return data;
 }
 
-void processQuestButtons(BleKeyboard* keyboard){
+void processKeyboardButtons(BleKeyboard* keyboard){
 	uint8_t raw = readShiftRegister();
 	unsigned long now = millis();
 
@@ -72,4 +72,8 @@ void processQuestButtons(BleKeyboard* keyboard){
 			lastRawState |= (1 << bit);
 		}
 	}
+}
+
+
+void processGamepadButtons(BleGamepad* gamepad){
 }

@@ -12,12 +12,16 @@
 #define MODE_PC_VISUALPINBALL          1
 #define MODE_GAMEPAD_STARWARSVR        2
 
-BleKeyboard keyboard("Quest-PinballFXVR", "QPBFXVR", 100);
+#ifndef CURRENT_MODE
+#endif 
+
+BleKeyboard keyboard;
 //BleKeyboard keyboard("Quest-PinballFXVR", "QPBFXVR", 100);
 //BleGamepad gamepad("Quest")
 
+bool savedGameModeExists = false;
+GAME_MODE currentControllerMode;
 bool wasConnected = false;
-bool toggled = false;
 
 void setLED(uint8_t r, uint8_t g, uint8_t b) {
 	neopixelWrite(PIN_NEOPIXEL, r, g, b);
@@ -74,14 +78,6 @@ void loop() {
 		}
 		return;
 	}
-	
-	// sendLeftFlipperDataHigh();
-	// delay(1000);
-	// sendLeftFlipperDataLow();
-	// delay(1000);
-	// sendRightFlipperDataHigh();
-	// delay(1000);
-	// sendRightFlipperDataLow();
-	// delay(1000);
-	processQuestButtons(&keyboard);
+
+	processKeyboardButtons(&keyboard);
 }
