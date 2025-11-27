@@ -3,9 +3,6 @@
 #include <BleKeyboard.h>
 #include <BleGamepad.h>
 #include <Arduino.h>
-#include "MODE_1_PINBALL_FX_VR.hpp"
-#include "MODE_2_PC_VISUAL_PINBALL.hpp"
-#include "MODE_3_GAMEPAD_STAR_WARS_VR.hpp"
 #include "preferencesManager.hpp"
 #include "solenoidProcessor.hpp"
 
@@ -23,6 +20,23 @@
 #define BTN_BIT_UNUSED2       5  // F - Unused (was Left Flipper)
 #define BTN_BIT_LMAGNASAVE    6  // G - Left MagnaSave
 #define BTN_BIT_LFLIPPER      7  // H - Left Flipper
+
+// Quest Pinball FX VR key mappings
+#define KEY_RFLIPPER      '6'
+#define KEY_LFLIPPER      'u'
+#define KEY_PLUNGER       '8'
+#define KEY_SPECIAL       '5'
+#define KEY_RMAGNASAVE    'd'
+#define KEY_LMAGNASAVE    'f'
+
+const char buttonKeys[] = {
+	KEY_RMAGNASAVE,
+	KEY_RFLIPPER,
+	KEY_PLUNGER,
+	KEY_SPECIAL,
+	KEY_LMAGNASAVE,
+	KEY_LFLIPPER
+};
 
 const uint8_t buttonBits[] = {
 	BTN_BIT_RMAGNASAVE,

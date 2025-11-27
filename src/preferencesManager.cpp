@@ -2,18 +2,34 @@
 
 Preferences preferences;
 
-uint8_t getControllerMode(){
-	preferences.begin("pinballWizard.v1", true);
-	uint8_t saved = preferences.getUChar("gMode", 0);
+int getControllerMode(){
+	preferences.begin("pb", false);
+	int wasSaved = preferences.getInt("mode");
 	preferences.end();
-	if(saved > 2 || saved < 0) saved = 0;  // Safety check
-	Serial.print("getControllerMode(): " + saved);
-	return saved;
+	if(wasSaved > 2 || wasSaved < 0) wasSaved = 0;  // Safety check
+	Serial.print("getControllerMode(): ");
+	Serial.println(wasSaved);
+	return wasSaved;
 }
 
 void saveControllerMode(int mode){
-	preferences.begin("pinballWizard.v1", false);
-	preferences.putUChar("gMode", (uint8_t)mode);
+	preferences.begin("pb", false);
+	preferences.putInt("mode", mode);
 	preferences.end();
-	Serial.print("saveControllerMode with " + mode);
+	Serial.print("saveControllerMode with ");
+	Serial.println(mode);
+}
+
+void gotoNextMode(int mode){
+	Serial.println("Calling gotoNextMode()");
+	Serial.print("Saving the following as the next mode: ");
+	Serial.println(mode);
+	mode = (mode + 1) % 3;
+	saveControllerMode(mode);
+}
+
+void setBLEMACAddress(int mode){
+	uint8_t newMAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0x00};
+	newMAC[5] = 0x10 + mode;  // Different last byte for each mode
+	esp_base_mac_addr_set(newMAC);
 }
