@@ -46,7 +46,6 @@ void processKeyboardButtons(BleKeyboard* keyboard){
 	for (uint8_t i = 0; i < totalButtons; i++) {
 		uint8_t bit = map[i].bit;
 		char key = map[i].key;
-	
 		bool rawPressed = !(raw & (1 << bit));
 		bool lastRawPressed = !(lastRawState & (1 << bit));
 
@@ -63,6 +62,7 @@ void processKeyboardButtons(BleKeyboard* keyboard){
 				bool rightFlipper = (bit == BTN_BIT_RFLIPPER);
 				bool leftNudge = (bit == BTN_BIT_LMAGNASAVE);
 				bool rightNudge = (bit == BTN_BIT_RMAGNASAVE);
+
 				// Edge detected on debounced state
 				if (rawPressed) {
 					if(leftNudge && nudgeActive) return;

@@ -80,7 +80,7 @@ void loop() {
 	if(keyboard.isConnected()){
 		// process button presses first
 		processKeyboardButtons(&keyboard);
-		// process movement second (but only if accelerometer is enabled
+		// process movement next (but only if accelerometer is enabled)
 		if(accelerometerEnabled) {
 			checkNudge(&keyboard);
 		}
