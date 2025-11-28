@@ -1,6 +1,5 @@
 #include "arcadeButtonProcessor.hpp"
 
-extern bool processingButtons;
 extern bool nudgeActive; 
 
 uint8_t stableState = 0xFF;           // debounced state (1 = released)
@@ -66,20 +65,18 @@ void processKeyboardButtons(BleKeyboard* keyboard){
 				bool rightNudge = (bit == BTN_BIT_RMAGNASAVE);
 				// Edge detected on debounced state
 				if (rawPressed) {
-					processingButtons = true;
+					if(leftNudge && nudgeActive) return;
+					if(rightNudge && nudgeActive) return;
+					keyboard->press(key);
 					if(leftFlipper) sendLeftFlipperDataHigh();
 					else if(rightFlipper) sendRightFlipperDataHigh();
-					else if(leftNudge && nudgeActive) return;
-					else if(rightNudge && nudgeActive) return;
-					keyboard->press(key);
 #ifdef BUTTON_DEBUG
 					logButtonEvent(bit, key, "pressed");
 #endif
 				} else {
-					processingButtons = false;
+					keyboard->release(key);
 					if(leftFlipper) sendLeftFlipperDataLow();
 					else if(rightFlipper) sendRightFlipperDataLow();
-					keyboard->release(key);
 #ifdef BUTTON_DEBUG
 					logButtonEvent(bit, key, "released");
 #endif

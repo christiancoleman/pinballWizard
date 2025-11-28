@@ -8,12 +8,12 @@
 #define PIN_NEOPIXEL      5
 #define NEOPIXEL_POWER    8
 
+#define TIME_IN_MS_HOLD_FOR_MODE_CHANGE 2000
+
 bool connected = false;
-bool wasConnected = false;
 bool ledOn = false;
 bool resetHeld = false;
 bool accelerometerEnabled = false;
-bool processingButtons = false;
 bool nudgeActive = false;
 int currentGameMode = 0;
 unsigned long lastBlink = 0;
@@ -63,44 +63,39 @@ void loop() {
 			lastResetPress = millis();
 		}
 		if(resetHeld){
-			if(millis() - lastResetPress >= 3000) {
+			if(millis() - lastResetPress >= TIME_IN_MS_HOLD_FOR_MODE_CHANGE) {
 				gotoNextMode(currentGameMode);
-				delay(1000);
+				delay(1000); // blocking but that's okay; I want to be sure the save happens
 				Serial.println("Restarting the ESP 32...");
 				ESP.restart();
 			} else {
-				return;
+				return; // we want to exit loop early so that lastResetPress isn't set to 0/ 
 			}
 		}
 	}
 	lastResetPress = 0;
 	resetHeld = false;
 
+	// if we have a bluetooth connection, let's do the important stuff
 	if(keyboard.isConnected()){
-		connected = true;
-	}
-	
-	if (connected != wasConnected) {
-		if (connected) {
-			Serial.println("Connected!");
-			setLED(0, 255, 0);
-		} else {
-			Serial.println("Disconnected");
+		// process button presses first
+		processKeyboardButtons(&keyboard);
+		// process movement second (but only if accelerometer is enabled
+		if(accelerometerEnabled) {
+			checkNudge(&keyboard);
 		}
-		wasConnected = connected;
-	}
-	
-	if (!connected) {
+		// set the LED to solid color once
+		if(!connected){
+			connected = true;
+			setLED(0, 255, 0);
+		}
+	// if we've lost the connection then let's blink the LED
+	} else {
 		if (millis() - lastBlink > 500) {
 			lastBlink = millis();
 			ledOn = !ledOn;
 			setLED(0, ledOn ? 255 : 0, 0);
 		}
-		return;
-	} 
-
-	processKeyboardButtons(&keyboard);
-	if(accelerometerEnabled) {
-		if(!processingButtons) checkNudge(&keyboard);
+		connected = false;
 	}
 }

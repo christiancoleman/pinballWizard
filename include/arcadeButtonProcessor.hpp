@@ -74,4 +74,4 @@ const unsigned long DEBOUNCE_MS = 5;  // try 5–10ms
 void processKeyboardButtons(BleKeyboard* keyboard);
 
 // Uncomment to enable Serial debug logs for button edges
-#define BUTTON_DEBUG
+//#define BUTTON_DEBUG
